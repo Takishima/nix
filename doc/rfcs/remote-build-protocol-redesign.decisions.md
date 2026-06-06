@@ -377,7 +377,7 @@ as frozen.
 
 ---
 
-## Operational decision O1 — Coordinator deployment model (spike §6 Q1, open-points §1.1)
+## Operational decision O1 — Coordinator deployment model (spike §6 Q1)
 
 > This is an **operational** decision, not a wire blocker: it concerns *how the
 > coordinator process is deployed, owned, and reaped*, not the public protocol.
@@ -507,7 +507,7 @@ listener.** Concretely:
 
 ---
 
-## Operational decision O2 — Coordinator crash-recovery posture (spike §6 Q5, open-points §1.2)
+## Operational decision O2 — Coordinator crash-recovery posture (spike §6 Q5)
 
 > Like O1, an **operational** decision with **no public-wire** surface, so it
 > does not gate the Phase 3 / serve-3.0 freeze. It answers the question O1
@@ -605,7 +605,7 @@ never to incorrectness.
 
 ---
 
-## Operational decision O3 — Lazy-spawn lifecycle (spike §6 Q8, open-points §1.4)
+## Operational decision O3 — Lazy-spawn lifecycle (spike §6 Q8)
 
 > Operational, **no public-wire** surface. Mostly *defanged by O1* (supervised
 > spawn is canonical; lazy spawn is the fallback), so this only specifies the
@@ -670,7 +670,7 @@ public-wire surface.
 
 ---
 
-## Operational decision O4 — Coordinator throughput posture (spike §6 Q7, open-points §1.3)
+## Operational decision O4 — Coordinator throughput posture (spike §6 Q7)
 
 > Operational, **no public-wire** surface. A *posture* decision plus a
 > measurement gate — it deliberately does not pre-commit a scaling design.
@@ -724,7 +724,7 @@ it. No public-wire surface.
 
 ---
 
-## Operational decision O5 — Replay cap default and truncation UX (RFC Q1 remainder, spike §6 Q4, open-points §1.7)
+## Operational decision O5 — Replay cap default and truncation UX (RFC Q1 remainder, spike §6 Q4)
 
 > Operational/UX; the replay buffer's *location* was already decided (coordinator
 > memory, spike §3.5). This fixes only the **cap and the truncation
@@ -780,7 +780,7 @@ public-wire surface.
 
 ---
 
-## Operational decision O6 — `QueryActiveBuilds` privacy default (RFC Q5, spike §6 Q6, open-points §1.5)
+## Operational decision O6 — `QueryActiveBuilds` privacy default (RFC Q5, spike §6 Q6)
 
 > A **policy** decision (chosen by the project) about default visibility; it
 > reuses Blocker 1's per-observable authorization and adds no new authz
@@ -837,7 +837,7 @@ version-gated op (RFC §7); this fixes its **default policy**, not a new field
 
 ---
 
-## Operational decision O7 — Elastic-capacity advertisement (RFC Q6, open-points §1.6)
+## Operational decision O7 — Elastic-capacity advertisement (RFC Q6)
 
 > A **Phase 6 / G6** decision. It touches the wire only additively (a negotiated
 > capability flag, gated like every other new capability, RFC §7) and is

@@ -41,19 +41,19 @@ core of Blocker 1/2. Throw-away branch; no merged production C++.
 **Deliverables**
 
 - **A1 — coordinator binary** (`nix-daemon --coordinator` role, per
-  [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11)):
+  [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1)):
   `START_OR_ATTACH`/`SUBSCRIBE`/`UNSUBSCRIBE`/`CANCEL_HINT`/`QUERY_ACTIVE`
   (spike §3.2); registry; in-memory replay buffer with the
-  [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17)
+  [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4)
   cap (4 MiB, head+tail+marker); refcount; runs the build via the existing
   `Worker`/`DerivationBuildingGoal` path so output `PathLocks` still apply.
 - **A2 — feature-flagged relay path** in the daemon child: on a
   capability-negotiated request, `START_OR_ATTACH` + relay `FRAME`s to the client
   socket instead of building locally; rewire `MonitorFdHup` →`UNSUBSCRIBE`
   (spike §3.4). Includes the
-  [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5-open-points-12)
+  [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5)
   EOF→build-locally fallback and the
-  [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8-open-points-14)
+  [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8)
   spawn/election.
 - **A3 — slow test derivation** emitting marker lines + a counter file so a
   second client reliably attaches mid-build.

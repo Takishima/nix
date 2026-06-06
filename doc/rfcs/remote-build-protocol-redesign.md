@@ -20,9 +20,7 @@ kept in sync with this file:
 
 * **[Decisions record](./remote-build-protocol-redesign.decisions.md)** — the
   three wire blockers (Blockers 1–3) and seven operational decisions (O1–O7)
-  that this RFC's body summarises and links to. The decision-record section
-  headings carry historical `spike §… / open-points §…` provenance
-  breadcrumbs; those are attribution only.
+  that this RFC's body summarises and links to.
 * **[Spike](./remote-build-protocol-redesign.spike.md)** — the cross-process
   build-coordination design spike (the §4.3.3 prerequisite for dedup/attach on
   the stock daemon): mechanism evaluation, the chosen coordinator interface,
@@ -562,7 +560,7 @@ table lives in the decisions record,
 The broadcaster keeps a bounded **replay buffer** of the structured log so
 far (full log up to a configurable cap, then switch to "head + tail with a
 truncation marker"). **The cap is now decided** *(decisions record,
-[O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17))*:
+[O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4))*:
 a configurable **byte cap, default 4 MiB**, over which the buffer keeps a
 **~1 MiB head + ~3 MiB tail** with an explicit `…N frames / M bytes
 truncated…` marker frame (head preserves the configure/early-failure
@@ -609,7 +607,7 @@ candidate mechanisms, in rough order of increasing scope:
    the same for both backend classes and confines the new complexity to one
    process. It is also the natural home for `QueryActiveBuilds`.
    **Its deployment is now decided** *(decisions record,
-   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11))*:
+   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1))*:
    the coordinator is the **daemon binary in a `--coordinator` role** (a separate
    process, not a separate codebase, and not in-process with the listener),
    **supervised and reaped by the long-lived `daemonLoop` parent** that already
@@ -618,19 +616,19 @@ candidate mechanisms, in rough order of increasing scope:
    peer-cred-verified); one per machine and run as root, **not** per-user (dedup
    is deliberately cross-user); lazy spawn is the fallback only for non-daemon
    setups. **Crash-recovery posture is also decided** *(decisions record,
-   [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5-open-points-12))*:
+   [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5))*:
    v1 is safe-degrade — builders are forked so they die with the coordinator
    (releasing their output `PathLocks`), clients fall back to building locally,
    and the existing lock/validity logic guarantees no corruption or
    double-build; a persistent registry that lets builds survive a restart is
    deferred as evidence-gated hardening.
    Its **lifecycle** *(decisions record,
-   [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8-open-points-14))*
+   [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8))*
    is lazy-at-first-capability-request with the daemon parent as sole spawner
    (a `flock`/`O_EXCL` + socket-`bind` election and decline-and-respawn handshake
    cover the non-daemon fallback and stale-socket reclaim), and its **v1
    throughput posture** *(decisions record,
-   [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7-open-points-13))*
+   [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7))*
    is a single-threaded event loop, with per-build-key sharding deferred and
    gated on the spike's throughput measurement — a later internal change, since
    the coordinator is below the wire.
@@ -1153,14 +1151,14 @@ the log fixes.
 
 0. **Cross-process coordination mechanism (the blocker, §4.3.3).** ✅ **RESOLVED**
    (spike §2.5 + decisions record
-   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11)).
+   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1)).
    The stock `nix-daemon` adopts a **coordinator process** (the daemon binary in
    a `--coordinator` role, supervised by the `daemonLoop` parent). This is the
    prerequisite for Phase 3, §4.7.4 re-attach, and registry introspection on the
    stock daemon.
 1. **Replay buffer policy.** ✅ **RESOLVED** — *location* by the spike
    (coordinator memory, §3.5); *cap/UX* by decisions record
-   [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17)
+   [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4)
    (byte cap default 4 MiB; ~1 MiB head + ~3 MiB tail with a truncation-marker
    frame; `replayed=true` tagging; post-build handoff to the persisted log).
 2. **Cancellation across tenants.** ✅ **RESOLVED**
@@ -1187,13 +1185,13 @@ the log fixes.
    criteria (incl. a named Hydra maintainer's sign-off). See §7. The Hydra
    coordination *thread* itself remains out of scope for this document.
 5. **`QueryActiveBuilds` privacy.** ✅ **RESOLVED**
-   ([O6](./remote-build-protocol-redesign.decisions.md#operational-decision-o6--queryactivebuilds-privacy-default-rfc-q5-spike-6-q6-open-points-15)).
+   ([O6](./remote-build-protocol-redesign.decisions.md#operational-decision-o6--queryactivebuilds-privacy-default-rfc-q5-spike-6-q6)).
    Default: untrusted callers see **only their own authorized builds and nothing
    else** (no other-tenant names/keys/existence, no count); an operator may opt in
    to an **anonymized aggregate in-flight count**. Preserves Blocker 1's
    no-existence-oracle property.
 6. **Elastic-capacity advertisement.** ✅ **RESOLVED**
-   ([O7](./remote-build-protocol-redesign.decisions.md#operational-decision-o7--elastic-capacity-advertisement-rfc-q6-open-points-16)).
+   ([O7](./remote-build-protocol-redesign.decisions.md#operational-decision-o7--elastic-capacity-advertisement-rfc-q6)).
    Support **both** a handshake-advertised "elastic/self-scheduling" capability
    **and** a per-machine operator field (operator config overrides
    advertisement); when either selects elastic, the hook stops gating on local

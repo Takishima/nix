@@ -775,7 +775,7 @@ charter:
    semantics; the spike flags but does not resolve this.
 3. **Coordinator as a `nix-daemon` role vs. sidecar.** ✅ **RESOLVED**
    (decisions record,
-   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11)).
+   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1)).
    The coordinator is the **daemon binary in a `--coordinator` role** — a
    separate process (not a separate codebase, not in-process with the listener),
    **supervised and reaped by the long-lived `daemonLoop` parent**; one per store
@@ -818,7 +818,7 @@ it is its own RFC, not a spike.
 
 1. **Coordinator deployment model (RFC §4.3.3.1).** ✅ **RESOLVED** — decisions
    record
-   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11):
+   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1):
    daemon binary in a `--coordinator` role, a separate process supervised/reaped
    by the `daemonLoop` parent, one per store at `$NIX_STATE_DIR/coordinator.socket`
    (`0660`, peer-cred-verified), run as root and one per machine (not per-user),
@@ -835,12 +835,12 @@ it is its own RFC, not a spike.
    roots, and per-build timeouts needs an agreed matrix before Phase 3.
 4. **Replay cap default and truncation UX (RFC Q1) — §3.5.** ✅ **RESOLVED** —
    decisions record
-   [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17):
+   [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4):
    byte cap (default 4 MiB), head (~1 MiB) + tail (~3 MiB) with an explicit
    truncation-marker frame, `replayed=true` tagging, post-build handoff to the
    persisted log via `QueryBuildLog`. Cap and split are configurable/tunable.
 5. **Coordinator crash-recovery posture.** ✅ **RESOLVED** — decisions record
-   [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5-open-points-12):
+   [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5):
    **v1 is safe-degrade, no persistence/re-adoption.** Builders are forked
    `dieWithParent`/in a coordinator-killable cgroup so a crash releases their
    `PathLocks`; relay children fall back to building locally (coalescing via
@@ -849,20 +849,20 @@ it is its own RFC, not a spike.
    separate, evidence-gated hardening item, **not** a Phase 3 prerequisite.
 6. **`QueryActiveBuilds` default privacy for untrusted callers (RFC Q5).**
    ✅ **RESOLVED** — decisions record
-   [O6](./remote-build-protocol-redesign.decisions.md#operational-decision-o6--queryactivebuilds-privacy-default-rfc-q5-spike-6-q6-open-points-15):
+   [O6](./remote-build-protocol-redesign.decisions.md#operational-decision-o6--queryactivebuilds-privacy-default-rfc-q5-spike-6-q6):
    default is own-authorized-builds-only with no count; an operator may opt in to
    an anonymized aggregate in-flight count. Preserves the no-existence-oracle
    property; enforced at the single `QUERY_ACTIVE` chokepoint (§3.7.3).
 7. **Coordinator throughput and concurrency ceiling — §2.3.** ✅ **RESOLVED
    (posture)** — decisions record
-   [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7-open-points-13):
+   [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7):
    v1 ships a **single-threaded event loop**; sharding (natural axis: the build
    key) is deferred and **gated on the §4.2 throughput measurement**. Below the
    wire, so a later sharded design is an internal change with no back-compat
    impact.
 8. **Lazy-spawn lifecycle posture — §2.4/§3.1.** ✅ **RESOLVED** — decisions
    record
-   [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8-open-points-14):
+   [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8):
    within one daemon the parent is the sole spawner (lazy, at first
    capability-negotiated request); the fallback uses a `flock`/`O_EXCL`-lockfile
    + socket-`bind` election, stale-socket reclaim, a configurable idle-exit grace
