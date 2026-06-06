@@ -453,6 +453,17 @@ means two different `.drv` paths that resolve to the same build coalesce,
 which is exactly right for CA derivations and harmless for input-addressed
 ones (where the drv path already determines the resolved drv).
 
+**Resolution is a client-side precondition; the coordinator derives the key,
+it does not resolve.** *(Decided — see the decisions record,
+[Blocker 1](./remote-build-protocol-redesign.decisions.md#blocker-1--trust-under-ca-key-merge-rfc-q3q7-spike-3854).)*
+The client resolves the derivation and sends the **resolved derivation
+itself**; the coordinator computes the build key by **hashing the resolved
+drv it received** — it never trusts a client-asserted key string, and it
+never performs resolution itself (which would require eval-store-only `.drv`
+inputs it may not have, spike §2.2/§5.4.1). This pins the key as the
+hash/store-path of the resolved derivation and closes the "client lies about
+the key to attach to another tenant's build" hole.
+
 **Attach semantics.** When a `BuildDerivation`/realise request arrives:
 
 1. Resolve the derivation to its build key.
@@ -482,12 +493,40 @@ and unsubscribe without affecting the build.
 **Cancellation is reference-counted — and that is the hard part across
 processes.** A session detaching (client disconnect) must **not** cancel
 the build if other sessions remain attached; the build is cancelled only
-when its subscriber count hits zero *and* no `keep-going`/root reason to
-continue exists. Today a client disconnect trips `MonitorFdHup`
+when its subscriber count hits zero *and* no root reason to continue
+exists. Today a client disconnect trips `MonitorFdHup`
 (`nix-store.cc:1009,1032`) and the handling child simply exits — there is
 no shared refcount, so this semantics is **not** achievable in the stock
 daemon without the coordinator (§4.3.3). In a single-process backend it is
 a straightforward counter.
+
+The exact multi-subscriber rules are now **decided** (the full state→action
+table lives in the decisions record,
+[Blocker 2](./remote-build-protocol-redesign.decisions.md#blocker-2--the-refcounted-cancel-matrix-rfc-q2-spike-52)):
+
+* **Lifetime = refcount + an explicit build/GC root only.** A registered
+  durable root ("I want this output") is the *sole* `hasRootReasonToContinue()`.
+  **`--keep-going` does *not* extend a shared build's lifetime** (refining this
+  section's earlier wording, which lumped it with roots): keep-going governs
+  whether a client's *sibling* targets proceed after a failure — per-client
+  scheduling, not this build's lifetime.
+* **No originator privilege.** The first subscriber is just subscriber #1, so
+  "the originator detaches while a joiner remains" simply means refcount ≥ 1 and
+  the build continues. There is no session that can unilaterally kill a build
+  others are still watching.
+* **Timeouts are per-subscriber deadlines.** The shared build runs under the
+  **maximum (most-generous) envelope** of currently-attached subscribers'
+  `maxSilentTime`/`buildTimeout`; a subscriber whose own shorter deadline elapses
+  receives a `TimedOut` `BuildResult` and detaches (decrementing the refcount)
+  **without** cancelling the build for others. Strictest-wins is rejected as a
+  cross-tenant denial-of-service.
+* **`--keep-failed` is a logical OR.** The failed build directory is one artifact
+  on the builder, so if any currently-attached subscriber requested it, it is
+  preserved (under the builder's existing on-disk policy).
+* **An active cancel is an unsubscribe-with-error scoped to the cancelling
+  client only.** That client synthesizes its own local interrupt and sends
+  `CANCEL_HINT`/`UNSUBSCRIBE`; no new wire `BuildResult` status is needed, and
+  the build is unaffected if other subscribers remain.
 
 #### 4.3.1 Late joiners and replay
 
@@ -830,6 +869,39 @@ The redesign preserves the existing rules:
   clients see only builds they could have requested, or an aggregate
   count, never other tenants' derivation names.
 
+**Authorisation is per-observable and re-derived per-subscriber against the
+resolved key.** *(Decided — decisions record,
+[Blocker 1](./remote-build-protocol-redesign.decisions.md#blocker-1--trust-under-ca-key-merge-rfc-q3q7-spike-3854).)*
+The "checked before subscribing" rule above is sharpened to:
+
+* **No existence/timing oracle.** Authorisation runs *before* the registry is
+  consulted; a denied caller receives a **uniform denial** whose content and
+  timing do **not** branch on whether the build exists. The mere *fact* that a
+  build is in flight is itself gated behind authorisation — `START_OR_ATTACH` and
+  `QueryActiveBuilds` never reveal MISS-vs-HIT (nor answer faster on a hit) to a
+  caller not authorised for the resolved key.
+* **Per-observable gate.** The live log, the replay buffer, the `BuildResult`
+  (status, `builtOutputs`, output paths), the `deduplicated` flag, and any
+  `QueryActiveBuilds` entry are all released *only* to a subscriber authorised to
+  build the resolved key. (`deduplicated` is allowed for such a subscriber: a
+  co-authorised party learning the *same CA build* is in flight is not a
+  cross-tenant secret, and untrusted clients can only dedup on CA derivations.)
+* **CA key-merge: no inherited authorisation.** When provisional `resolving`
+  entries (§4.3, spike §3.8) for distinct unresolved drvs promote/merge onto one
+  resolved key, authorisation is **re-derived per subscriber against the resolved
+  key at promotion** — never the union or intersection of the unresolved-drv
+  authorisations. A subscriber that fails the resolved-key check is detached with
+  an error. The merge cannot leak one caller's inputs to another because the
+  shared Build contains *only* resolved-drv state (inputs already collapsed to
+  concrete content-addressed paths), its log, and its outputs — all of which a
+  co-authorised subscriber could obtain itself.
+* **No new input-reuse channel.** Dedup coalesces builds of *already-resolved*
+  drvs; whether a client may *use* an input path remains the existing
+  signature/CA/trusted-user check, applied at resolution time (before the key
+  exists). This is how nixbuild.net's "uploaded inputs reusable across accounts
+  only if cache-signed or inter-account-trusted" maps onto Nix's model — dedup
+  adds nothing to it.
+
 ## 7. Wire compatibility and versioning
 
 * **Serve protocol** bumps to **3.0**. New capabilities (log frames,
@@ -855,6 +927,30 @@ The redesign preserves the existing rules:
   layout must not be declared stable as 3.0 until the Hydra coordination
   (§4.8) lands — otherwise a later Hydra-driven field change would break the
   very compatibility this section promises.
+* **The serve 3.0 field set is decided as a stable core + a deferred set.**
+  *(Decided — decisions record,
+  [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-30-freeze-rfc-q4-7-spike-51).)*
+  The **stable diagnostic core** that lets `hydra-queue-runner` retire its
+  out-of-band log handling is `logRef`, structured failure detail
+  (`failurePhase` + `exitCode` + `logTail`), and the new `QueryBuildLog`
+  operation (the absolute minimum to unblock Phase 1 is `logRef` +
+  `QueryBuildLog`). The **deferred set** — `builderId` and `deduplicated` —
+  stays behind the unstable version, because its semantics are defined by the
+  still-spiking Phase 3 coordinator/dedup design and must not be frozen yet.
+  New fields are appended *after* the 2.8 `builtOutputs` block under a `>= {3,0}`
+  guard in **binary** form (JSON is reserved for the pre-existing 2.6 realisation
+  shim), and `QueryBuildLog` is `Command = 10`, the next free value after
+  `AddToStoreNar = 9` — so no existing field changes meaning and a 2.8 reader
+  stops before the new tail.
+* **Concrete freeze criteria — bump `SERVE_PROTOCOL_VERSION` to `(3 << 8 | 0)`
+  only when all hold:** (1) a **named Hydra maintainer** has signed off on the
+  exact field set and byte order; (2) a `hydra-queue-runner` branch consumes
+  `QueryBuildLog` + the structured log frames (§4.2) to drop its out-of-band log
+  capture *and* reads the extended `BuildResult`, validated against a new-Nix
+  builder; (3) golden/characterisation tests prove round-trip at 2.8 and 3.0 and
+  that a 2.8 peer ignores 3.0 fields (back-compat matrix, both directions); and
+  (4) the field set has soaked on the unstable version for ≥1 release cycle with
+  no layout change.
 
 ## 8. Phased implementation plan
 
@@ -986,6 +1082,12 @@ the log fixes.
 
 ## 10. Open questions
 
+> **Q2, Q3, Q4, and Q7 are now resolved** in the decisions record
+> ([`remote-build-protocol-redesign.decisions.md`](./remote-build-protocol-redesign.decisions.md));
+> their summaries below are marked **RESOLVED** with the decision and a link.
+> (Q0 and Q1 were resolved earlier by the spike: coordinator process, replay
+> buffer in coordinator memory with a head+tail cap.)
+
 0. **Cross-process coordination mechanism (the blocker, §4.3.3).** Which of
    coordinator-process / shared-memory / single-process-daemon does the
    stock `nix-daemon` adopt for cross-connection dedup/attach? This is the
@@ -995,29 +1097,44 @@ the log fixes.
 1. **Replay buffer policy.** Full log vs. head+tail cap, and the
    truncation-marker UX for very long builds — its *location* is decided by
    Q0 (process memory vs. coordinator-owned ring buffer).
-2. **Cancellation across tenants.** Exact semantics when the *originating*
-   session detaches but late joiners remain — confirmed reference-counted
-   here, but interactions with `--keep-going` and timeouts need a test
-   matrix.
-3. **CA resolution timing.** The build key needs the resolved drv; for
-   deep CA graphs the resolution itself can race. Does the registry key on
-   the resolved drv only, or also expose a "resolving" pre-state that
-   later joiners can attach to?
-4. **Hydra field set.** The extended `BuildResult` and `QueryBuildLog`
-   should be designed *with* Hydra (§4.8) so it can drop its out-of-band
-   log handling; the exact serve 3.0 field set must be frozen with Hydra
-   maintainers. Coordination is out of scope for this document.
+2. **Cancellation across tenants.** ✅ **RESOLVED**
+   ([Blocker 2](./remote-build-protocol-redesign.decisions.md#blocker-2--the-refcounted-cancel-matrix-rfc-q2-spike-52)).
+   Lifetime = refcount + an explicit build/GC root *only* (no originator
+   privilege; `--keep-going` does **not** extend a shared build's lifetime);
+   timeouts are per-subscriber deadlines under a most-generous envelope
+   (strictest-wins rejected as cross-tenant DoS); `--keep-failed` is OR; an
+   active cancel is an unsubscribe-with-error scoped to the cancelling client.
+   See §4.3 for the rules and the decisions record for the full state→action
+   table.
+3. **CA resolution timing.** ✅ **RESOLVED**
+   ([Blocker 1](./remote-build-protocol-redesign.decisions.md#blocker-1--trust-under-ca-key-merge-rfc-q3q7-spike-3854)).
+   Key on the resolved drv (the coordinator derives the key by hashing the
+   *client-resolved* drv it receives; resolution is a client-side
+   precondition), with a short-lived `resolving` pre-state that later joiners
+   attach to and that is **re-authorised per subscriber against the resolved
+   key at promotion** (spike §3.8). See §4.3 and §6.
+4. **Hydra field set.** ✅ **RESOLVED**
+   ([Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-30-freeze-rfc-q4-7-spike-51)).
+   Freeze a stable diagnostic core (`logRef`, `failurePhase`/`exitCode`/
+   `logTail`, `QueryBuildLog`); defer `builderId`/`deduplicated` to the unstable
+   version; bump `SERVE_PROTOCOL_VERSION` to 3.0 only on four named freeze
+   criteria (incl. a named Hydra maintainer's sign-off). See §7. The Hydra
+   coordination *thread* itself remains out of scope for this document.
 5. **`QueryActiveBuilds` privacy.** Default verbosity for untrusted
    callers (aggregate counts only vs. nothing).
 6. **Elastic-capacity advertisement.** How a builder declares "I
    self-schedule / have elastic capacity" — a new field in the machines
    spec / store config, or negotiated in the handshake? And how `maxJobs`
    degrades to a hint without breaking existing `/etc/nix/machines` files.
-7. **Reuse key vs. trust.** Keying dedup/reuse on the resolved + content-
-   addressed derivation (the nixbuild.net model) interacts with the trust
-   model (§6): inputs uploaded by one client must not be reusable by
-   another unless cache-signed or explicitly trusted. The exact key and its
-   authorisation check need to be specified together.
+7. **Reuse key vs. trust.** ✅ **RESOLVED**
+   ([Blocker 1](./remote-build-protocol-redesign.decisions.md#blocker-1--trust-under-ca-key-merge-rfc-q3q7-spike-3854)).
+   The key and its authorisation are specified together: key = the resolved
+   drv; authorisation is per-observable and re-derived per-subscriber against
+   the resolved key, before registry lookup (no existence/timing oracle); and
+   dedup introduces **no new input-reuse channel** — input trust stays the
+   existing signature/CA/trusted-user check applied at resolution time, which is
+   how nixbuild.net's "uploaded inputs reusable only if cache-signed or
+   inter-account-trusted" maps onto Nix's model. See §6.
 
 ## 11. Summary
 
