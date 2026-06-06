@@ -32,13 +32,19 @@ recurring operational complaints motivate this redesign:
    fetch. `nix log` does not help because the log was never persisted in a
    place the client can reach.
 
-3. **Using a remote eval store together with a remote build store is
-   awkward.** The split between `--eval-store` and the build store works
-   for local stores, but the `ssh://` build store explicitly rejects
-   `--eval-store`, and copying derivations/closures between the two is
-   manual and easy to get wrong.
+3. **The eval-store / build-store split mostly works — except for logs.**
+   Driving a remote build store alongside a (local or remote) eval store
+   is functionally fine: derivations and closures are copied and builds
+   succeed just as in the non-split case. The remaining gap in this
+   configuration is the *same* one as everywhere else — you still cannot
+   get the build logs. (There is one narrow sharp edge: the `ssh://` build
+   store rejects `--eval-store` outright at `legacy-ssh-store.cc:221`. But
+   where that is avoided — e.g. with `ssh-ng://` — the split is not the
+   problem; logs are.) In other words, this is not really a fourth
+   problem: it is problems 1–2 again, and the design must simply not treat
+   "build store ≠ eval store" as a special case for logging.
 
-A fourth, more subtle issue motivates part of the design:
+A more subtle issue motivates part of the design:
 
 4. **A remote builder has no first-class notion of "this derivation is
    already being built".** If two clients ask the same builder to realise
@@ -130,15 +136,20 @@ clients reach the same builder:
 
 ### 2.4 Eval-store / build-store separation today
 
+This already works for the common cases; it is included here only because
+the design must not regress it and must extend logging to cover it.
+
 * `--eval-store` is parsed in `common-eval-args.cc:140`; `getEvalStore()`
   defaults to the build store (`command.cc:159-164`).
 * `Worker` holds both `store` (build) and `evalStore`
   (`worker.hh:200-202`); inputs are copied eval→build in
-  `derivation-building-goal.cc:151-162`.
-* But `LegacySSHStore::buildPaths` throws
+  `derivation-building-goal.cc:151-162`. The drv-and-closure copy in the
+  hook is hand-rolled but correct (`build-remote.cc:307,341,355,398`).
+* The one real sharp edge is that `LegacySSHStore::buildPaths` throws
   *"building on an SSH store is incompatible with '--eval-store'"*
-  (`legacy-ssh-store.cc:221`). The drv-and-closure copy in the hook is
-  hand-rolled (`build-remote.cc:307,341,355,398`).
+  (`legacy-ssh-store.cc:221`). Outside that specific `ssh://`+`--eval-store`
+  combination, the split behaves like the non-split case — **the missing
+  piece is purely the logs (§2.1), not the copying.**
 
 ## 3. Goals and non-goals
 
@@ -153,9 +164,13 @@ clients reach the same builder:
 * **G3 — Dedup & attach.** Concurrent requests for the same derivation on
   one builder coalesce into a single build, and **every** waiter follows
   the same live log (with replay for late joiners).
-* **G4 — Eval/build store ergonomics.** Driving a remote build store with
-  a local (or remote) eval store "just works", with explicit, observable
-  closure copying.
+* **G4 — Logs are store-split-agnostic.** Live streaming (G1) and durable
+  fetch (G2) work identically whether or not the build store differs from
+  the eval store, and whether either or both are remote. The split is
+  already functional today; the only requirement is that logging not treat
+  it as a special case. (Removing the narrow `ssh://`+`--eval-store`
+  rejection at `legacy-ssh-store.cc:221` is a minor cleanup, not a
+  headline goal.)
 * **G5 — Introspection.** The state of a builder (in-flight builds,
   queue, who is attached) is queryable for diagnostics and tooling.
 
@@ -335,24 +350,31 @@ the real log. `LogStore` already provides `getBuildLog`/`getBuildLogExact`
 (`log-store.cc`, `local-fs-store.cc:160`); this just exposes it over the
 wire and wires `nix log`'s store resolution to consult the build store.
 
-### 4.6 Eval-store / build-store ergonomics (G4)
+### 4.6 Logs across the eval/build store split (G4)
 
-* Make a remote build store accept an eval store: replace the hard error
-  in `legacy-ssh-store.cc:221` (and the equivalent on the `ssh-ng://`
-  path) with the **explicit closure-copy** that the hook already performs
-  by hand (`build-remote.cc:307,355`), surfaced as observable activities
-  ("copying derivation closure eval→build", "copying outputs build→eval")
-  so the data movement is no longer invisible.
-* Provide a single high-level entry point — conceptually
-  `realiseRemote(evalStore, buildStore, derivedPaths)` — that:
-  1. copies the drv closure from eval store to build store,
-  2. opens a Build Session and streams logs (§4.2),
-  3. copies outputs back to wherever the caller wants them, and
-  4. returns extended `BuildResult`s.
-  The distributed-build hook becomes a thin caller of this, instead of
-  re-implementing the choreography inline.
-* Document and test the matrix of {local, ssh, ssh-ng} × {eval-store,
-  build-store} so the supported combinations are explicit.
+The store split already works functionally, so this section is about
+**not** making logs a special case, plus one small cleanup.
+
+* The Build Session (§4.1) and log-fetch (§4.5) are keyed on the
+  **derivation**, independent of which store happens to be the eval store
+  and which is the build store. Streaming and `nix log` must therefore
+  behave identically in the split configuration with no extra wiring — the
+  log frames and `logRef` carry through unchanged. This is the actual
+  requirement behind G4: a user running a remote build store with a
+  separate eval store should get the same live + fetchable logs as anyone
+  else.
+* Minor cleanup (not required for logs): remove the hard error in
+  `legacy-ssh-store.cc:221` so `ssh://`+`--eval-store` no longer aborts,
+  reusing the **explicit closure-copy** the hook already performs by hand
+  (`build-remote.cc:307,355`). While there, surface those copies as
+  observable activities ("copying derivation closure eval→build", "copying
+  outputs build→eval") so the (already-correct) data movement is at least
+  visible.
+* Optionally fold the hook's choreography behind a single entry point —
+  conceptually `realiseRemote(evalStore, buildStore, derivedPaths)` — that
+  copies the drv closure, opens a Build Session and streams logs (§4.2),
+  copies outputs back, and returns extended `BuildResult`s. This is a
+  refactor for clarity, not a fix for a functional defect.
 
 ## 5. End-to-end: what a remote build looks like after this RFC
 
@@ -448,12 +470,15 @@ Each phase is independently shippable and testable.
   *Touches:* `build/worker.{cc,hh}`, `build/derivation-building-goal.cc`,
   new `build/build-registry.{cc,hh}`, daemon/serve handlers.
 
-* **Phase 4 — Eval/build store entry point.** Implement
-  `realiseRemote(...)`, lift the `--eval-store` restriction, make the
-  closure copies observable, refactor `build-remote.cc` onto it.
-  Delivers **G4**.
+* **Phase 4 — Store-split log parity + cleanup (low priority).** Verify
+  and test that streaming (Phase 2) and fetch (Phase 0) behave identically
+  when build store ≠ eval store and when either is remote — in practice
+  this should already hold because logs are keyed on the derivation, so
+  the phase is mostly a test matrix. Bundle the minor cleanup of lifting
+  the `ssh://`+`--eval-store` rejection and making the closure copies
+  observable; optionally introduce `realiseRemote(...)`. Delivers **G4**.
   *Touches:* `legacy-ssh-store.cc`, `build-remote.cc`,
-  `libcmd/installables.cc`, `store-api`.
+  `libcmd/installables.cc`, `store-api`, `tests/functional/`.
 
 * **Phase 5 — Introspection.** `QueryActiveBuilds` + a `nix` subcommand to
   render it; authorisation per §6. Delivers **G5**.
@@ -509,5 +534,8 @@ which is what distributed builds actually use, has none of it and actively
 throws the log away. This RFC unifies these fragments behind a **Build
 Session** abstraction and a server-side **Build Registry**, delivers the
 operational wins in a phased, backward-compatible order (persist → enrich
-results → stream → dedup/attach → store ergonomics → introspection), and
-sets `ssh-ng://` up as the single production-grade remote build transport.
+results → stream → dedup/attach → store-split log parity → introspection),
+and sets `ssh-ng://` up as the single production-grade remote build
+transport. The eval-store/build-store split is already functional; the
+redesign's only job there is to make sure logs work the same way they do
+everywhere else.
