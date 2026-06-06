@@ -5,7 +5,6 @@
 | **Status**       | Spike / design + prototype plan                |
 | **Gates**        | RFC §8 "Spike" milestone → Phase 3 wire freeze |
 | **Parent**       | [`remote-build-protocol-redesign.md`](./remote-build-protocol-redesign.md) |
-| **Review**       | [`remote-build-protocol-redesign.review.md`](./remote-build-protocol-redesign.review.md) |
 | **Resolves**     | RFC Q0 (mechanism), Q1 (replay-buffer location), and contributes to Q3 (CA resolution timing) |
 
 > This is a **design spike**, not an implementation. Its single job is to let
@@ -22,9 +21,8 @@
 
 The RFC's headline feature — **one build on a builder, many clients attached to
 its live log, with replay for late joiners and reference-counted cancellation**
-(G3, §4.3) — is blocked on a single process-model fact that the review correctly
-flagged and the RFC author accepted (review §2, RFC §2.3): **the stock
-`nix-daemon` is fork-per-connection.** There is no shared `Worker`, goal map, or
+(G3, §4.3) — is blocked on a single process-model fact the RFC now states
+plainly (RFC §2.3): **the stock `nix-daemon` is fork-per-connection.** There is no shared `Worker`, goal map, or
 log buffer that two connections can both see, so the "share one build, fan out
 its log" mechanism does **not** exist even latently and cannot be "lifted" from
 existing code.
@@ -203,9 +201,9 @@ reinvent post-hoc fetch; it must cleanly hand off to it.
 
 ### 2.1 Criteria
 
-The reviewer specifically cares that **fault isolation, crash cleanup, and
-cross-tenant log leakage are confronted, not hand-waved** (review §2, §3, §4).
-The criteria below are weighted accordingly.
+The criteria that must be **confronted, not hand-waved** are **fault
+isolation, crash cleanup, and cross-tenant log leakage**. The criteria below
+are weighted accordingly.
 
 1. **Fault isolation.** Today a crashing/OOM-killed build is contained to one
    forked child; the daemon and other connections survive. What is the blast
@@ -261,7 +259,7 @@ memory, under a mutex/futex) maps build key → segment + state.
 
 | Criterion | Assessment |
 |---|---|
-| **Fault isolation** | **Worst.** The whole point of shared memory is a shared failure domain. A builder that corrupts the ring (wild write, mismatched producer/consumer indices after a crash mid-write) can wedge or mislead *every* reader. A reader crash is benign; a **writer crash mid-frame** leaves the ring in an ambiguous state with no transactional recovery — robust lock-free SPMC ring design across a trust boundary is notoriously hard to get right (review §2 explicitly warns this "pushes lifecycle, cleanup-on-crash, and backpressure into shared-memory bookkeeping that is easy to get wrong"). |
+| **Fault isolation** | **Worst.** The whole point of shared memory is a shared failure domain. A builder that corrupts the ring (wild write, mismatched producer/consumer indices after a crash mid-write) can wedge or mislead *every* reader. A reader crash is benign; a **writer crash mid-frame** leaves the ring in an ambiguous state with no transactional recovery — robust lock-free SPMC ring design across a trust boundary is notoriously hard to get right (RFC §4.3.3 mechanism 2 warns this "pushes lifecycle, cleanup-on-crash, and backpressure into shared-memory bookkeeping that is easy to get wrong"). |
 | **Lifecycle & cleanup** | Hardest. Shared segments and the registry table outlive any single process by design, so a crashed writer leaves an orphaned segment and a registry entry with a now-bogus writer pid and a non-zero refcount. Reaping requires a liveness protocol (writer pid + a watchdog, or `pid_t` liveness checks racing against pid reuse). `shm_unlink` ownership is ambiguous when readers may still be attached. Rob-futex/`EOWNERDEAD` handling is required to recover the registry mutex if a holder dies in the critical section. Every one of these is a classic shared-memory footgun. |
 | **Backpressure** | Awkward. A ring buffer is fixed-size: either the writer overwrites unread data (a slow reader silently loses log it can never recover except via post-hoc fetch — acceptable but must be explicit), or the writer blocks when the ring is full (a slow reader now throttles the **build itself** — unacceptable, the build's speed must not depend on a client). The overwrite policy is the only sane one, which means the ring is really just an in-shm replay buffer with lossy live tail — at which point most of the value is the registry, not the ring. |
 | **Security / trust** | Dangerous. The segment spans clients. Access control is filesystem permissions on the shm object plus discipline; there is no per-frame authorization. If two tenants of different trust map the same key's segment, the segment **is** the leak. You can scope segments per (key, authorized-uid-set), but now you are maintaining an ACL in shared memory — the exact thing a coordinator does in normal memory with the existing trust code. The trust check cannot be "before subscribe" in any clean sense because subscribe *is* an `mmap`. |

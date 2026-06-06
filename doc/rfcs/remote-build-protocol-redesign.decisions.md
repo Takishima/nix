@@ -5,7 +5,6 @@
 | **Status**       | Decision record (converged) — unblocks Phase 3 wire design |
 | **Parent**       | [`remote-build-protocol-redesign.md`](./remote-build-protocol-redesign.md) |
 | **Spike**        | [`remote-build-protocol-redesign.spike.md`](./remote-build-protocol-redesign.spike.md) |
-| **Reviews**      | [`*.review.md`](./remote-build-protocol-redesign.review.md), [`*.spike.review.md`](./remote-build-protocol-redesign.spike.review.md) |
 | **Validation**   | [`*.validation.md`](./remote-build-protocol-redesign.validation.md) — the executable plan for these decisions' owed prototypes/tests (the "Follow-up" sections below are indexed there) |
 | **Resolves**     | RFC Q2 (cancel matrix), Q3 (CA resolution timing), Q4 (Hydra field set), Q7 (reuse-key vs. trust); spike §5.4.1–.2, §6 Q2/Q3 |
 | **Working group**| libstore/protocol maintainers, a Hydra maintainer, a security reviewer |
@@ -310,7 +309,7 @@ as frozen.
   Rejected: their meaning depends on the unfrozen Phase 3 coordinator/dedup
   design; freezing a byte layout for semantics still in spike risks a later
   Hydra/Phase-3-driven change breaking the very back-compat §7 promises — exactly
-  the retroactive-break the RFC warns against (§7 final bullet, review §4).
+  the retroactive-break the RFC warns against (§7 final bullet).
 - **JSON-encode the new fields.** Rejected: the serve protocol is binary
   length-prefixed; JSON is present only as a 2.6 realisation compat shim
   (`serve-protocol.cc:81-95`). New scalar/string fields (`exitCode`,
@@ -684,7 +683,7 @@ measurement** (spike §4.2). Rationale and guard-rails:
 
 - The coordinator's central per-frame cost is only "append to replay buffer +
   persisted-log writer + write to each subscriber fd"; the **heavy per-client
-  relay already lives in the connection children** (spike-review §2.3), so the
+  relay already lives in the connection children** (spike §3.4), so the
   central serialization point is far lighter than "all log traffic, fully
   processed, in one thread."
 - **The natural shard axis, if needed, is the build key:** builds are
@@ -873,7 +872,7 @@ are unchanged and fixed-size builders are never silently overcommitted.
   control.
 - **Config only.** Rejected: every elastic backend must be hand-configured by
   every user, ignoring that capable backends can simply advertise.
-- **Change `maxJobs` to a hint by default.** Rejected (RFC §4.7.1, review §4):
+- **Change `maxJobs` to a hint by default.** Rejected (RFC §4.7.1):
   silently overcommits fixed-size machines operators rely on.
 
 ### 3. What it commits

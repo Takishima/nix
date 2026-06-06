@@ -6,7 +6,6 @@
 | **Parent**       | [`remote-build-protocol-redesign.md`](./remote-build-protocol-redesign.md) |
 | **Decisions**    | [`*.decisions.md`](./remote-build-protocol-redesign.decisions.md) (Blockers 1–3, O1–O7) |
 | **Spike**        | [`*.spike.md`](./remote-build-protocol-redesign.spike.md) (§4 prototype) |
-| **Tracks**       | open-points [§2](./remote-build-protocol-redesign.open-points.md) (validation debt) |
 
 > Every *design* question is decided (Blockers 1–3, O1–O7). What remains is
 > **execution, not clarification**: prototypes, tests, and one external
@@ -151,8 +150,8 @@ are the gate to bumping `SERVE_PROTOCOL_VERSION`.
 **The four freeze criteria** (Blocker 3 — *all* must hold to bump to 3.0):
 
 - [ ] **D3.1** — a **named** Hydra queue-runner maintainer has reviewed and
-  signed off on the exact field set and byte order. *(This is open-points §3.3;
-  naming them is the first action.)*
+  signed off on the exact field set and byte order. *(Naming them is the first
+  action and the single biggest external dependency in the whole set.)*
 - [ ] **D3.2** — a `hydra-queue-runner` branch (a) consumes `QueryBuildLog` + the
   structured log frames to **drop its out-of-band log capture**, and (b) reads
   the extended `BuildResult`, both validated against a new-Nix builder.

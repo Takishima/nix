@@ -12,6 +12,36 @@
 > phases without further large design decisions. It deliberately does not
 > change any C++ yet.
 
+## 0. Document set
+
+This RFC is the canonical document. Four companions hold detail that would
+otherwise bloat it; each is linked from the relevant section below and is
+kept in sync with this file:
+
+* **[Decisions record](./remote-build-protocol-redesign.decisions.md)** — the
+  three wire blockers (Blockers 1–3) and seven operational decisions (O1–O7)
+  that this RFC's body summarises and links to. The decision-record section
+  headings carry historical `spike §… / open-points §…` provenance
+  breadcrumbs; those are attribution only.
+* **[Spike](./remote-build-protocol-redesign.spike.md)** — the cross-process
+  build-coordination design spike (the §4.3.3 prerequisite for dedup/attach on
+  the stock daemon): mechanism evaluation, the chosen coordinator interface,
+  and a throw-away prototype plan with pass/fail criteria.
+* **[Validation plan](./remote-build-protocol-redesign.validation.md)** — the
+  execution plan that turns the "decided but not yet validated" work into
+  sequenced Workstreams A–D, concrete test specs, and the three
+  freeze-readiness checklists (F-INT / F-WIRE / F-SERVE30).
+* **[Hydra coordination draft](./remote-build-protocol-redesign.hydra-coordination.md)**
+  — the ready-to-post opening message for the external Hydra ↔ Nix thread that
+  must sign off on the serve 3.0 diagnostic core (§4.8, §7).
+
+Two earlier review-cycle documents and an open-item tracker have been
+**retired** after their content was folded in: the RFC review and the spike
+review (every finding was incorporated here and in the spike respectively —
+see §2.3, §4.3, §4.3.3, and the spike's §2.2/§3.7), and the open-points
+tracker (superseded by the validation plan once Blockers 1–3 and O1–O7 were
+all decided). The git history retains them.
+
 ## 1. Motivation
 
 Offloading builds to remote machines is a core Nix feature, but the
