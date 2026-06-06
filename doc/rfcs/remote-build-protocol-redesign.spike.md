@@ -515,11 +515,14 @@ its peer:
   daemon's own listening socket is permissioned.
 * **Peer-credential check.** On every accepted control connection the
   coordinator reads the connecting peer's `SO_PEERCRED` (uid/pid) — the same
-  primitive `unix::getPeerInfo`/`authPeer` already use on the daemon socket
-  (`daemon.cc:212,342`) — and **requires the peer to be a daemon process running
-  as the daemon's own uid.** A connection from any other uid is refused before a
-  single byte of `sessionAuth` is read. An attacker who cannot already run code
-  as the daemon uid cannot forge `sessionAuth`.
+  primitive the daemon already uses on its own socket: `getPeerInfo`
+  (defined `src/libcmd/unix/unix-socket-server.cc:26`, using `SO_PEERCRED`
+  on Linux / `LOCAL_PEERCRED` on macOS/BSD) wrapped by `authPeer`, called as
+  `unix::getPeerInfo` at `daemon.cc:341` (`authPeer` def `:212`) — and
+  **requires the peer to be a daemon process running as the daemon's own
+  uid.** A connection from any other uid is refused before a single byte of
+  `sessionAuth` is read. An attacker who cannot already run code as the
+  daemon uid cannot forge `sessionAuth`.
 
 This is the single most important property to get right, and it is what makes
 "the coordinator trusts the child's reported identity" safe: the coordinator
