@@ -158,9 +158,13 @@ inline std::optional<std::string> takeFrame(std::string & in)
 // see; it is identical whether the bytes came from a coordinator-relayed child
 // or a local build, which is the spike's no-flag-day property (§5.1).
 
+// Build outcome (Blocker 2 §3 table). TimedOut is a per-subscriber detach, not a
+// build cancellation — the build continues for others (the max-envelope rule).
+enum class ResultStatus : uint8_t { Success = 0, Failure = 1, TimedOut = 2 };
+
 enum class CRec : uint8_t {
     Log    = 1, // { replayed, bytes }
-    Result = 2, // { ok, exitCode, deduplicated, logRef }
+    Result = 2, // { status, exitCode, deduplicated, logRef }
     Denied = 3, // authorize() refused (no existence info leaked)
 };
 
@@ -190,6 +194,10 @@ struct ClientRequest {
     std::string unresolvedDrv;    // provisional registry key during `resolving`
     std::string resolvedDrv;      // resolved drv material -> canonical build key
     uint32_t    resolveMs = 0;    // how long the resolve phase takes (test knob)
+    // --- Workstream C / refcounted-cancel (Blocker 2) ---
+    uint32_t    timeoutMs = 0;    // per-subscriber deadline (0 = none); max-envelope rule
+    uint8_t     keepFailed = 0;   // --keep-failed (logical OR across subscribers)
+    uint32_t    failAt = 0;       // builder fails at this line (0 = never) — for C-e
 
     std::string encode() const {
         BufWriter w;
@@ -197,6 +205,7 @@ struct ClientRequest {
         w.u8(replayWanted); w.u8(explicitRoot); w.str(counterFile);
         w.u32(nLines); w.u32(sleepMs); w.u8(behavior);
         w.u8(ca); w.str(unresolvedDrv); w.str(resolvedDrv); w.u32(resolveMs);
+        w.u32(timeoutMs); w.u8(keepFailed); w.u32(failAt);
         return w.buf;
     }
     static ClientRequest decode(const std::string & body) {
@@ -205,6 +214,7 @@ struct ClientRequest {
         q.replayWanted = r.u8(); q.explicitRoot = r.u8(); q.counterFile = r.str();
         q.nLines = r.u32(); q.sleepMs = r.u32(); q.behavior = r.u8();
         q.ca = r.u8(); q.unresolvedDrv = r.str(); q.resolvedDrv = r.str(); q.resolveMs = r.u32();
+        q.timeoutMs = r.u32(); q.keepFailed = r.u8(); q.failAt = r.u32();
         return q;
     }
 };

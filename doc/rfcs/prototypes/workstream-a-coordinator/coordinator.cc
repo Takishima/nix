@@ -100,6 +100,11 @@ struct Build
     long resolveDeadlineMs = 0; // when the resolve phase promotes (steady ms)
     // builder params, captured so a CA build can start at *promotion*, not attach:
     std::string counterFile; uint32_t nLines = 0; uint32_t sleepMs = 0;
+    // Workstream C / Blocker 2:
+    uint32_t failAt = 0;        // builder fails at this line (C-e)
+    bool keepFailedOR = false;  // --keep-failed is a logical OR across subscribers
+    bool timedOutCancel = false;// cancelled because every subscriber's deadline elapsed
+    std::string workdir;        // stand-in for the failed build dir (kept iff keepFailedOR)
 
     int refcount = 0;
     std::vector<int> subscribers;     // live subscriber connection fds
@@ -141,6 +146,7 @@ struct Conn
     bool deduplicated = false;
     bool replayWanted = false;
     bool started = false;       // START_OR_ATTACH succeeded (refcount held)
+    long deadlineMs = 0;        // Workstream C: per-subscriber timeout (0 = none)
 };
 
 // ---- the coordinator -------------------------------------------------------
@@ -194,11 +200,14 @@ public:
             for (auto & [k, b] : registry)
                 if (b->builderReadFd >= 0) pfds.push_back({b->builderReadFd, POLLIN, 0});
 
-            // Wake in time for the soonest CA resolve→promote deadline (§3.8).
+            // Wake in time for the soonest timed event: a CA resolve→promote
+            // deadline (§3.8) or a subscriber timeout (Blocker 2).
             long soonest = -1;
+            auto bump = [&](long d) { if (d) soonest = (soonest < 0) ? d : std::min(soonest, d); };
             for (auto & [k, b] : registry)
-                if (b->state == AState::Resolving)
-                    soonest = (soonest < 0) ? b->resolveDeadlineMs : std::min(soonest, b->resolveDeadlineMs);
+                if (b->state == AState::Resolving) bump(b->resolveDeadlineMs);
+            for (auto & [fd, c] : conns)
+                if (c->subscribed && c->deadlineMs) bump(c->deadlineMs);
             int timeout;
             if (soonest >= 0) timeout = std::max(0, int(soonest - nowMs()));
             else timeout = (conns.empty() && registry.empty()) ? IDLE_MS : -1;
@@ -206,6 +215,7 @@ public:
             int n = ::poll(pfds.data(), pfds.size(), timeout);
             if (n < 0) { if (errno == EINTR) continue; throw std::runtime_error("poll"); }
             checkPromotions();
+            checkDeadlines();
             if (n == 0 && soonest < 0) { dbg("idle-exit"); break; }   // O3 idle exit
             if (n == 0) continue;
 
@@ -317,6 +327,9 @@ private:
         std::string unresolvedDrv = r.str();
         std::string resolvedDrv = r.str();
         uint32_t resolveMs = r.u32();
+        uint32_t timeoutMs = r.u32();
+        bool keepFailed = r.u8() != 0;
+        uint32_t failAt = r.u32();
 
         // The drv material the caller is authorized against *at attach time*:
         // the unresolved drv for CA (the resolved key is not known yet), the drv
@@ -341,6 +354,7 @@ private:
         }
 
         c.auth = auth; c.replayWanted = replayWanted; c.subId = nextSubId++;
+        c.deadlineMs = timeoutMs ? (nowMs() + long(timeoutMs)) : 0;   // per-subscriber deadline
 
         // Registry key: a CA build lives under a provisional "unresolved:" key
         // during the resolve phase (spike §3.8); IA goes straight to its key.
@@ -354,6 +368,7 @@ private:
             nb->key = regKey;
             nb->explicitRoot = explicitRoot;
             nb->counterFile = counterFile; nb->nLines = nLines; nb->sleepMs = sleepMs;
+            nb->failAt = failAt; nb->keepFailedOR = keepFailed;
             nb->resolvedDrv = resolvedDrv;
             nb->authMaterial = ca ? resolvedDrv : drvForBuild;
             b = nb.get();
@@ -372,6 +387,7 @@ private:
         } else {                                            // HIT -> attach
             b = it->second.get();
             if (explicitRoot) b->explicitRoot = true;
+            if (keepFailed) b->keepFailedOR = true;         // §3: keep-failed is an OR
             c.deduplicated = true;
             dbg("HIT   " + regKey + " -> attaching (refcount was " + std::to_string(b->refcount) + ")");
         }
@@ -388,6 +404,10 @@ private:
     {
         b.logRef = stateDir + "/log/" + sanitize(b.key) + ".log";
         b.logFd = ::open(b.logRef.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0640);
+        // The build's working directory; on failure it is kept iff --keep-failed
+        // was requested by ≥1 attached subscriber (Blocker 2 §3, the OR rule).
+        b.workdir = b.logRef + ".workdir";
+        ::mkdir(b.workdir.c_str(), 0750);
 
         int pipefd[2];
         if (::pipe(pipefd) < 0) throw std::runtime_error("pipe");
@@ -407,6 +427,7 @@ private:
                    b.key.c_str(),
                    std::to_string(b.nLines).c_str(),
                    std::to_string(b.sleepMs).c_str(),
+                   std::to_string(b.failAt).c_str(),
                    (char *) nullptr);
             std::fprintf(stderr, "exec builder failed: %s\n", strerror(errno));
             _exit(127);
@@ -476,6 +497,32 @@ private:
         for (auto & k : due) promote(k);
     }
 
+    // Workstream C / Blocker 2: per-subscriber deadlines under a max envelope.
+    // A subscriber whose own deadline elapses gets a TimedOut BuildResult and
+    // detaches (refcount--) WITHOUT cancelling the build for others; the build
+    // thus runs under the max of the remaining deadlines. When the *last*
+    // subscriber times out, refcount hits 0 and the normal no-root cancel fires
+    // -- i.e. "all deadlines elapsed → cancel (timeout)".
+    void checkDeadlines()
+    {
+        long t = nowMs();
+        std::vector<int> expired;
+        for (auto & [fd, c] : conns)
+            if (c->subscribed && c->deadlineMs && t >= c->deadlineMs) expired.push_back(fd);
+        for (int fd : expired) {
+            auto it = conns.find(fd);
+            if (it == conns.end()) continue;
+            Conn & c = *it->second;
+            dbg("TIMEOUT subscriber fd " + std::to_string(fd) + " key " + c.buildKey);
+            // Mark a timeout cancel iff this is the last subscriber (so the
+            // resulting cancel is attributable to timeout, not plain detach).
+            auto bi = registry.find(c.buildKey);
+            if (bi != registry.end() && bi->second->refcount <= 1) bi->second->timedOutCancel = true;
+            sendBuildResult(c, ResultStatus::TimedOut, 0, "");
+            onUnsubscribe(c);   // detach, refcount--, cancel iff 0 and no root
+        }
+    }
+
     // The resolve phase completed: re-authorize every subscriber against the
     // *resolved* key (decisions B1 §5 / T2), detaching failures with an error,
     // then promote — merging onto an existing real Build under the same resolved
@@ -502,9 +549,7 @@ private:
                     + " uid " + std::to_string(sc.auth.uid) + " -> detaching with error");
                 // The subscriber observes only an error -- never A's build log.
                 onBuildOutputTo(sc, "[re-authorization failed at CA promotion: not authorized for the resolved key]\n");
-                BufWriter w; w.u8(uint8_t(Msg::BuildResult));
-                w.u8(0); w.u32(13 /*EACCES-ish*/); w.u8(sc.deduplicated ? 1 : 0); w.str("");
-                enqueue(sc, frame(w.buf));
+                sendBuildResult(sc, ResultStatus::Failure, 13 /*EACCES-ish*/, "");
                 sc.subscribed = false; sc.started = false;
             }
         }
@@ -601,20 +646,35 @@ private:
         }
     }
 
+    void sendBuildResult(Conn & c, ResultStatus st, int code, const std::string & logRef)
+    {
+        BufWriter w; w.u8(uint8_t(Msg::BuildResult));
+        w.u8(uint8_t(st)); w.u32(uint32_t(code)); w.u8(c.deduplicated ? 1 : 0); w.str(logRef);
+        enqueue(c, frame(w.buf));
+    }
+
     void maybeFinalize(Build & b)
     {
         if (!(b.reaped && b.builderEof)) return;            // wait for both
         bool ok = !b.cancelled && WIFEXITED(b.exitStatus) && WEXITSTATUS(b.exitStatus) == 0;
         int code = WIFEXITED(b.exitStatus) ? WEXITSTATUS(b.exitStatus) : -1;
+        ResultStatus st = ok ? ResultStatus::Success : ResultStatus::Failure;
+
+        // Blocker 2 §3: keep the failed build dir iff it was a genuine build
+        // failure (not a cancel) AND ≥1 attached subscriber asked (--keep-failed
+        // OR). Success always cleans up.
+        if (!b.workdir.empty()) {
+            bool keep = (!ok && !b.cancelled && b.keepFailedOR);
+            if (!keep) ::rmdir(b.workdir.c_str());
+            dbg("workdir " + b.workdir + (keep ? " PRESERVED (keep-failed OR)" : " cleaned"));
+        }
+
         for (int fd : b.subscribers) {
             auto it = conns.find(fd);
             if (it == conns.end()) continue;
-            Conn & c = *it->second;
-            BufWriter w;
-            w.u8(uint8_t(Msg::BuildResult));
-            w.u8(ok ? 1 : 0); w.u32(uint32_t(code)); w.u8(c.deduplicated ? 1 : 0); w.str(b.logRef);
-            enqueue(c, frame(w.buf));
-            sendAttachState(c, AState::Finished);
+            sendBuildResult(*it->second, st, code, b.logRef);
+            sendAttachState(*it->second, AState::Finished);
+            it->second->subscribed = false; it->second->started = false;  // no post-finalize timeout
         }
         if (b.logFd >= 0) { ::close(b.logFd); b.logFd = -1; }
         std::string key = b.key;

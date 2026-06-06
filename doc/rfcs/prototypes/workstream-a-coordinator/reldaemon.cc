@@ -106,9 +106,9 @@ bool sendLog(int clientFd, bool replayed, const std::string & bytes)
     BufWriter w; w.u8(uint8_t(CRec::Log)); w.u8(replayed ? 1 : 0); w.str(bytes);
     return writeAllBlocking(clientFd, frame(w.buf));
 }
-void sendResult(int clientFd, bool ok, uint32_t code, bool dedup, const std::string & logRef)
+void sendResult(int clientFd, ResultStatus st, uint32_t code, bool dedup, const std::string & logRef)
 {
-    BufWriter w; w.u8(uint8_t(CRec::Result)); w.u8(ok ? 1 : 0); w.u32(code); w.u8(dedup ? 1 : 0); w.str(logRef);
+    BufWriter w; w.u8(uint8_t(CRec::Result)); w.u8(uint8_t(st)); w.u32(code); w.u8(dedup ? 1 : 0); w.str(logRef);
     writeAllBlocking(clientFd, frame(w.buf));
 }
 void sendDenied(int clientFd)
@@ -133,7 +133,7 @@ void fallbackLocalBuild(int clientFd, const ClientRequest & q)
     struct stat st;
     if (::stat(donePath.c_str(), &st) == 0) {            // already built under the lock
         sendLog(clientFd, false, "[fallback] build already completed by a peer (PathLock coalesced)\n");
-        sendResult(clientFd, true, 0, /*dedup=*/true, "");
+        sendResult(clientFd, ResultStatus::Success, 0, /*dedup=*/true, "");
     } else {
         std::string script = selfDir() + "/slow-builder.sh";
         std::string cmd = "/bin/sh '" + script + "' '" + q.counterFile + "' '" + q.buildKey
@@ -146,7 +146,7 @@ void fallbackLocalBuild(int clientFd, const ClientRequest & q)
             ok = (pclose(p) == 0);
         }
         if (ok) { int d = ::open(donePath.c_str(), O_CREAT | O_WRONLY, 0600); if (d >= 0) ::close(d); }
-        sendResult(clientFd, ok, ok ? 0 : 1, false, "");
+        sendResult(clientFd, ok ? ResultStatus::Success : ResultStatus::Failure, ok ? 0 : 1, false, "");
     }
     if (lockfd >= 0) { ::flock(lockfd, LOCK_UN); ::close(lockfd); }
 }
@@ -171,6 +171,7 @@ void handleConnection(int clientFd)
         w.str(q.buildKey); w.str(q.drvForBuild); w.u32(q.uid); w.u8(q.trusted);
         w.u8(q.replayWanted); w.u8(q.explicitRoot); w.str(q.counterFile); w.u32(q.nLines); w.u32(q.sleepMs);
         w.u8(q.ca); w.str(q.unresolvedDrv); w.str(q.resolvedDrv); w.u32(q.resolveMs);
+        w.u32(q.timeoutMs); w.u8(q.keepFailed); w.u32(q.failAt);
         writeAllBlocking(coord, frame(w.buf));
     }
     auto replyBody = readFrameBlocking(coord);
@@ -197,7 +198,10 @@ void handleConnection(int clientFd)
         if (pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) {
             char d[256]; ssize_t n = ::read(clientFd, d, sizeof(d));
             if (n <= 0) {
-                Op op = (q.behavior == 2) ? Op::CancelHint : Op::Unsubscribe;
+                // behavior 2 (disconnect-after-first) and 3 (active-cancel, reads
+                // until killed) both express an active cancel -> CANCEL_HINT;
+                // a plain HUP is a passive UNSUBSCRIBE (§3.4).
+                Op op = (q.behavior == 2 || q.behavior == 3) ? Op::CancelHint : Op::Unsubscribe;
                 BufWriter w; w.u8(uint8_t(op)); w.u64(subId); writeAllBlocking(coord, frame(w.buf));
                 dbg("client gone -> sent " + std::string(op == Op::CancelHint ? "CANCEL_HINT" : "UNSUBSCRIBE"));
                 break;
@@ -228,8 +232,9 @@ void handleConnection(int clientFd)
                     break;
                 }
                 case Msg::BuildResult: {
-                    bool ok = r.u8() != 0; uint32_t code = r.u32(); bool d = r.u8() != 0; std::string logRef = r.str();
-                    sendResult(clientFd, ok, code, d || dedup, logRef);
+                    ResultStatus st = ResultStatus(r.u8()); uint32_t code = r.u32();
+                    bool d = r.u8() != 0; std::string logRef = r.str();
+                    sendResult(clientFd, st, code, d || dedup, logRef);
                     ::close(coord);
                     return;
                 }

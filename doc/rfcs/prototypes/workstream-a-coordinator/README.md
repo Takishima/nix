@@ -1,12 +1,15 @@
-# Workstream A + B prototype — cross-process build coordination & CA-merge trust
+# Workstream A + B + C prototype — coordination, CA-merge trust, refcount-cancel
 
 > **Status:** throw-away validation prototype.
 > **Gates:** freeze **F-INT** (the Phase 3 *internal* coordinator interface) via
 > Workstream **A**; the **F-WIRE precondition** (trust tests T1–T3) via Workstream
-> **B**, which extends the A1 prototype.
+> **B**; the **refcounted-cancel matrix** (Blocker 2, coordinator-internal, no
+> wire) via Workstream **C**. B and C both extend the A1 prototype.
 > **Parent:** [`../../remote-build-protocol-redesign.validation.md`](../../remote-build-protocol-redesign.validation.md)
-> (Workstreams A & B) · [`../../remote-build-protocol-redesign.spike.md`](../../remote-build-protocol-redesign.spike.md)
-> (§3 interface, §3.8 CA resolve/promote, §4 prototype plan)
+> (Workstreams A, B & C) · [`../../remote-build-protocol-redesign.spike.md`](../../remote-build-protocol-redesign.spike.md)
+> (§3 interface, §3.8 CA resolve/promote, §4 prototype plan) ·
+> [`../../remote-build-protocol-redesign.decisions.md`](../../remote-build-protocol-redesign.decisions.md)
+> (Blocker 2 cancel table)
 
 This is the experimental branch the validation plan and the spike call for. Its
 single job is to **validate**, with running code, the cross-process coordination
@@ -60,11 +63,13 @@ property (§5.1): the mechanism lives entirely *below* the wire.
 | `slow-builder.sh` | deliberately-slow test builder; counter + progress side-effects | **A3** |
 | `client.cc` | `nix build` stand-in (IA / CA, normal / slow-reader / disconnect) | test driver |
 | `ctl.cc` | direct control-socket probe (`QUERY_ACTIVE` + `--start` for T1/T3) | test driver |
-| `tests/` | the acceptance-criteria harness (A) + trust tests (B) | — |
+| `tests/` | criteria harness (A) + trust tests (B) + cancel matrix (C) | — |
 
-The CA resolve→promote machinery (Workstream B, spike §3.8) lives in the same
-coordinator (`promote()` / `checkPromotions()`), because the validation plan
-specifies B as an **extension of the A1 prototype**, not a separate one.
+Workstreams B and C live in the **same** coordinator, because the validation plan
+specifies them as **extensions of the A1 prototype**: the CA resolve→promote
+machinery is `promote()` / `checkPromotions()` (B, spike §3.8); the per-subscriber
+deadlines, keep-failed OR, and scoped cancel are `checkDeadlines()` /
+`maybeFinalize()` / `onUnsubscribe()` (C, Blocker 2).
 
 ## Build & run
 
@@ -72,7 +77,8 @@ specifies B as an **extension of the A1 prototype**, not a separate one.
 make            # builds coordinator, reldaemon, client, ctl  (needs g++/clang++, C++20, Linux)
 make check      # Workstream A acceptance-criteria harness
 make check-b    # Workstream B trust tests (T1-T3), extends A1
-make check-all  # both
+make check-c    # Workstream C refcounted-cancel matrix (C-a..C-f)
+make check-all  # all three
 WSA_DEBUG=1 ./reldaemon /tmp/wsa &                 # manual: start a daemon
 ./client --state /tmp/wsa -k demo -t 1             # manual: input-addressed build
 ./client --state /tmp/wsa --ca -U ca:u -V ca:r -M 500 -t 1   # manual: CA build
@@ -95,10 +101,8 @@ script under `tests/`. `make check` runs them all; each prints `PASS`/`FAIL`.
 | **A-spawn** | N racing first-requests elect **exactly one** coordinator + one socket; idle-exit; respawn | `a-spawn.sh` | §3.1 / O3 |
 | **A-throughput** | measure single-threaded coordinator CPU + fan-out under many parallel builds × subscribers (data, not pass/fail) | `a-throughput.sh` | §2.3 / O4 |
 
-Refcounted cancel (the core of Workstream C's matrix that this prototype owns) is
-folded into `a-cancel.sh`: **C-a** (originator drops, build continues for the
-other subscriber), **C-b** (sole client drops, no root → cancel), **C-c** (sole
-client drops but holds an explicit root → build completes), per §3.4 / §5.2.
+`a-cancel.sh` demonstrates the refcount basics (C-a/C-b/C-c subset); the full
+matrix is Workstream C below.
 
 ## Workstream B — CA key-merge trust validation (gates F-WIRE)
 
@@ -124,6 +128,29 @@ The decisions this validates: `resolving` pre-state keyed on the unresolved drv;
 promote/merge onto the resolved key; **re-authorize-on-promotion** (decisions B1
 §5); the coordinator-recomputes-the-key rule (never trust the asserted key);
 and the no-existence-oracle property (authorize-before-registry).
+
+## Workstream C — refcounted-cancel matrix (Blocker 2, no wire)
+
+Implements `C1` — `hasRootReasonToContinue()` as **explicit-root-only** plus the
+**per-subscriber deadline + max-envelope** timer that spike §5.2 stubs to
+`false` — and encodes the full `build-dedup-cancel` matrix (decisions B2 §4).
+This is **coordinator-internal** (no wire change), so it gates no freeze, but the
+table must hold before Phase 3 implementation is trusted. `make check-c`:
+
+| ID | Scenario | Asserts |
+|---|---|---|
+| **C-a** | two attached, kill #1 (originator) | build continues; #2 completes; one build (no originator privilege) |
+| **C-b** | one attached, disconnect, no root | build cancels (progress < total) |
+| **C-c** | one attached **with explicit root**, disconnect | build completes |
+| **C-d** | two deadlines (short / long) | at the short deadline #1 gets `TimedOut` and detaches; build continues for #2 under the **max envelope** |
+| **C-e** | build fails, `--keep-failed` set by exactly one of two | failed dir **preserved** (logical OR); a no-keep-failed control cleans it up |
+| **C-f** | active-cancel (`CANCEL_HINT`) by one of two | cancel scoped to the canceller; the other still completes |
+
+Frozen rules exercised (Blocker 2 §3): lifetime = **refcount + explicit-root
+only**, no originator privilege; timeout = **per-subscriber detach under a max
+envelope** (strictest-wins rejected as a cross-tenant DoS); `--keep-failed` =
+**logical OR**; cancel = **scoped unsubscribe-with-error**, no new wire status
+(`TimedOut` is modelled as a per-subscriber result, the build is unaffected).
 
 ## Which decisions this bakes in (and validates)
 

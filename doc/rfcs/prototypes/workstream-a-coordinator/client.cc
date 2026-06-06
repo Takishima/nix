@@ -60,11 +60,14 @@ int main(int argc, char ** argv)
         {"resolved", required_argument, 0, 'V'},
         {"resolve-ms", required_argument, 0, 'M'},
         {"assert-key", required_argument, 0, 'K'},
+        {"timeout-ms", required_argument, 0, 'T'},
+        {"keep-failed", no_argument, 0, 'F'},
+        {"fail-at", required_argument, 0, 'X'},
         {0, 0, 0, 0}
     };
     int ch;
     bool assertGiven = false;
-    while ((ch = getopt_long(argc, argv, "k:d:c:n:s:u:t:r:R:b:S:AU:V:M:K:", opts, nullptr)) != -1) {
+    while ((ch = getopt_long(argc, argv, "k:d:c:n:s:u:t:r:R:b:S:AU:V:M:K:T:FX:", opts, nullptr)) != -1) {
         switch (ch) {
         case 'k': q.buildKey = optarg; break;
         case 'd': q.drvForBuild = optarg; break;
@@ -82,6 +85,9 @@ int main(int argc, char ** argv)
         case 'V': q.resolvedDrv = optarg; break;
         case 'M': q.resolveMs = std::stoul(optarg); break;
         case 'K': q.buildKey = optarg; assertGiven = true; break;  // T3 spoof override
+        case 'T': q.timeoutMs = std::stoul(optarg); break;         // per-subscriber deadline
+        case 'F': q.keepFailed = 1; break;                         // --keep-failed (OR)
+        case 'X': q.failAt = std::stoul(optarg); break;            // builder fails at this line
         default: return 2;
         }
     }
@@ -136,8 +142,12 @@ int main(int argc, char ** argv)
                 break;
             }
             case CRec::Result: {
-                bool ok = r.u8() != 0; uint32_t code = r.u32(); bool dedup = r.u8() != 0; std::string logRef = r.str();
-                std::fprintf(stderr, "DEDUP=%d\nRESULT ok=%d code=%u log=%s\n", dedup ? 1 : 0, ok ? 1 : 0, code, logRef.c_str());
+                ResultStatus st = ResultStatus(r.u8()); uint32_t code = r.u32();
+                bool dedup = r.u8() != 0; std::string logRef = r.str();
+                const char * sw = st == ResultStatus::Success ? "success"
+                                : st == ResultStatus::TimedOut ? "timedout" : "failure";
+                std::fprintf(stderr, "DEDUP=%d\nRESULT ok=%d status=%s code=%u log=%s\n",
+                             dedup ? 1 : 0, st == ResultStatus::Success ? 1 : 0, sw, code, logRef.c_str());
                 done = true;
                 break;
             }

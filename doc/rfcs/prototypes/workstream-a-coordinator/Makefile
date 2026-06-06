@@ -34,9 +34,14 @@ check-b: all
 	chmod +x slow-builder.sh tests/*.sh
 	tests/run-b.sh
 
-check-all: check check-b
+# Workstream C (refcounted-cancel matrix C-a..C-f, Blocker 2).
+check-c: all
+	chmod +x slow-builder.sh tests/*.sh
+	tests/run-c.sh
+
+check-all: check check-b check-c
 
 clean:
 	rm -f $(BINS)
 
-.PHONY: all check check-b check-all clean
+.PHONY: all check check-b check-c check-all clean
