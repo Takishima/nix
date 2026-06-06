@@ -231,7 +231,39 @@ Two precise defects fall out of this matrix:
   nothing live for that sub-build. `ssh-ng://` sub-builders do propagate,
   via the JSON forwarding at `derivation-building-goal.cc:739-746`.
 
-The redesign must close both gaps and make the matrix uniformly ✅/✅.
+### 2.7 Gap C — logs are off by default, and remote failures are quiet
+
+This gap is what users actually hit first, and it is a UX/discoverability
+problem rather than a protocol one. Validated against the code:
+
+* **`nix build` suppresses builder output unless `-L`.** The progress-bar
+  logger only prints `resBuildLogLine`/`resPostBuildLogLine` when
+  `printBuildLogs` is set (`progress-bar.cc:345-362`), which is enabled by
+  `-L` / `--print-build-logs` (`main.cc:117`); otherwise log lines are
+  shown transiently next to the activity and discarded. So **without `-L`,
+  no build output is ever written to stdout/stderr** — for local *or*
+  remote builds. A `… | tee build.log` therefore captures the progress UI
+  and the final error, but not the build log.
+* **A remote (`ssh-ng`) failure carries no log tail.** For a *local* build,
+  the failure message embeds the last N log lines via
+  `fixupBuilderFailureErrorMessage` (`derivation-building-goal.cc:1157`).
+  For a build that ran on a remote daemon, the error string is produced
+  remotely and returned over `STDERR_ERROR`; whether it includes a tail
+  depends on the remote. In practice users see a bare:
+
+  ```
+  error: Cannot build '/nix/store/…-whisper-cpp-1.7.5.drv'.
+         Reason: builder failed with exit code 127.
+         Output paths: /nix/store/…-whisper-cpp-1.7.5
+  ```
+
+  with **no log lines and no "run `nix log …`" hint** — and `nix log`
+  wouldn't work anyway over `ssh-ng` (Gap A). The result is a build that
+  failed for an unknowable reason (here, exit 127 = a missing command in
+  the builder), which is exactly the CI pain point.
+
+The redesign must close Gaps A and B (make the matrix uniformly ✅/✅) **and**
+fix Gap C so that a failed build is never silent: see **G8**.
 
 ## 3. Goals and non-goals
 
@@ -268,6 +300,13 @@ The redesign must close both gaps and make the matrix uniformly ✅/✅.
   serve protocol's `BasicClientConnection`/`BasicServerConnection`
   (`serve-protocol.hh:96-101`); Hydra can adopt structured logs and log
   fetch incrementally and is never forced to. (§4.8)
+* **G8 — Fail loud (CI-friendly).** A failed build must never be silent. On
+  failure the failing derivation's log is surfaced to the client without
+  extra round-trips and without requiring `-L` up front: the error carries
+  a log tail (for remote builds too), and a `print-build-logs = on-failure`
+  mode dumps the full failing log automatically. The target is that a CI
+  job running `nix build --store ssh-ng://…` shows *why* a build failed by
+  default. (§4.9)
 
 ### Non-goals
 
@@ -590,6 +629,37 @@ The guiding constraint: **no change may require a coordinated Hydra/Nix
 flag day.** Old Hydra ↔ new Nix and new Hydra ↔ old Nix must both work,
 which the version-gated, additive approach guarantees.
 
+### 4.9 Fail loud: logs on failure, especially in CI (G8 / Gap C)
+
+A failed build must explain itself by default. Three coordinated changes:
+
+1. **Remote failures carry a log tail.** When a build runs on a remote
+   daemon, the returned `BuildResult::Failure` must include the structured
+   log tail (the same data `fixupBuilderFailureErrorMessage` embeds for
+   local builds, `derivation-building-goal.cc:1157`) as a field (§4.4), so
+   the client can render "last N log lines" regardless of where the build
+   ran. Today that tail is local-only.
+
+2. **A `print-build-logs = on-failure` mode.** `--print-build-logs` is
+   currently a boolean gating live output (`progress-bar.cc:350`,
+   `main.cc:117`). Add a third mode that keeps live output quiet but, when
+   a build fails, dumps that build's **full** captured log (fetched via
+   `QueryBuildLog`/Gap-A if the build was remote). This is the CI-friendly
+   default: quiet on success, complete log on failure, no need to decide to
+   pass `-L` *before* you know something will break. It composes with G2:
+   if the live log wasn't retained client-side, the full log is fetched
+   from the build store on demand.
+
+3. **Actionable hint when the log can't be inlined.** If neither tail nor
+   fetch is available (e.g. an old builder), the error must say *how* to
+   get the log — `nix log <drv> --store <build-store>` once Gap A is fixed,
+   or the builder's own log endpoint — instead of failing silently.
+
+Interim guidance (works today, documented for users): pass `-L`, redirect
+to a file, and print it on non-zero exit; do **not** rely on `nix log`
+against an `ssh-ng://` store (Gap A) — use the builder's native log access
+(for nixbuild.net, its SSH `shell` / HTTP API) as the post-hoc source.
+
 ## 5. End-to-end: what a remote build looks like after this RFC
 
 ```
@@ -611,8 +681,18 @@ builder:   …replaying log…                                 [G3 replay]
 builder:   building            (cc -O2 …)                   [same live stream]
 builder: built '/nix/store/…-thing'  (deduplicated=true)   [G3]
 
-# later, on failure:
-$ nix log .#thing            # works against the remote build store  [G2/§4.5]
+# a failing remote build in CI, with print-build-logs = on-failure:   [G8]
+$ nix build "${drv}^*" --store ssh-ng://builder
+builder: building '/nix/store/…-whisper-cpp-1.7.5.drv'
+error: builder for '/nix/store/…-whisper-cpp-1.7.5.drv' failed (exit 127)
+  last 25 log lines (from builder):                          [G8 tail, remote]
+  > configure: error: 'cmake' not found in PATH
+  > …
+  full log:                                                  [G8 on-failure dump]
+  > … entire whisper-cpp build log fetched from the builder …
+
+# or, after the fact:
+$ nix log "${drv}" --store ssh-ng://builder   # works now        [G2/Gap A/§4.5]
 ```
 
 ## 6. Trust model (unchanged, restated)
@@ -672,13 +752,19 @@ Each phase is independently shippable and testable.
   `nix-store.cc` (`opServe`/`getBuildSettings`), `serve-protocol*.{hh,cc}`,
   `legacy-ssh-store.cc`, `nix/log` command.
 
-* **Phase 1 — Extended `BuildResult`.** Add `logRef`, `builderId`,
-  `deduplicated`, structured failure detail; serialise conditionally; have
-  `build-remote.cc` print the log tail + `nix log` hint on failure using
-  the structured fields instead of a bare message. Delivers the rest of
-  **G2**.
+* **Phase 1 — Extended `BuildResult` + fail-loud (Gap C).** Add `logRef`,
+  `builderId`, `deduplicated`, and **structured failure detail including
+  the log tail** so remote failures are as informative as local ones;
+  serialise conditionally; have `build-remote.cc` and the `ssh-ng` path
+  print the tail + a `nix log`/builder-log hint on failure. Add the
+  `print-build-logs = on-failure` mode (`progress-bar.cc`, `main.cc`,
+  `globals.hh`) that stays quiet on success and dumps the failing build's
+  full log on failure (fetched via Phase 0 when remote). Delivers the rest
+  of **G2** and **G8/Gap C** — the CI requirement "print the logs on
+  failure".
   *Touches:* `build-result.{hh,cc}`, `serve-protocol.cc`,
-  `worker-protocol*`, `build-remote.cc`.
+  `worker-protocol*`, `build-remote.cc`, `libmain/progress-bar.cc`,
+  `nix/main.cc`, `globals.hh`.
 
 * **Phase 2 — Live log streaming over serve (bridge) + close Gap B.** Add
   the optional log-frame sequence to serve `BuildDerivation`/`BuildPaths`
@@ -729,9 +815,16 @@ Each phase is independently shippable and testable.
 
 * **Functional tests** (`tests/functional/`): extend the existing
   `build-remote*.sh` / `build-hook*.sh` tests with assertions that
-  (a) live builder output appears on the client, (b) `nix log` against the
-  remote returns the real log after success and after failure, and
-  (c) the structured failure carries phase + exit status + tail.
+  (a) live builder output appears on the client with `-L`, (b) `nix log`
+  against the remote (`ssh-ng://`) returns the real log after success and
+  after failure (Gap A), and (c) the structured failure carries phase +
+  exit status + tail even for a remote build.
+* **Fail-loud test (G8 / Gap C):** a *failing* `nix build --store
+  ssh-ng://…` with `print-build-logs = on-failure` and **no `-L`** must
+  print the failing derivation's full log to stderr and exit non-zero —
+  the exact CI scenario from §2.7. Also assert the default (no `-L`, no
+  on-failure) still shows at least the failure tail, never a bare
+  exit-code-only message.
 * **Dedup test:** start a slow build on a builder, fire a second
   concurrent request for the same drv, assert exactly one build runs
   (e.g. via a marker file / build counter) and that the second client
@@ -775,19 +868,22 @@ Each phase is independently shippable and testable.
 
 Build logs already stream over `ssh-ng://` and persist via `LogStore`, and
 dedup already happens inside the in-process `Worker` — but only in
-fragments. The validated matrix (§2.6) shows the two concrete holes:
-**`nix log` is unsupported over `ssh-ng` (Gap A)** and the **serve
-(`ssh://`) hop drops logs upstream (Gap B)**, while dedup never fans its
-log out to a second client and the protocol fights elastic backends
-instead of cooperating with them.
+fragments. The validated matrix (§2.6–2.7) shows three concrete holes:
+**`nix log` is unsupported over `ssh-ng` (Gap A)**, the **serve (`ssh://`)
+hop drops logs upstream (Gap B)**, and **build output is hidden by default
+so remote failures are silent (Gap C)** — the last is what users hit first,
+e.g. a CI `nix build --store ssh-ng://…` that reports only `exit code 127`
+with no log. Meanwhile dedup never fans its log out to a second client and
+the protocol fights elastic backends instead of cooperating with them.
 
 This RFC unifies the existing fragments behind a **Build Session**
 abstraction and a server-side **Build Registry**, and delivers the
 operational wins in a phased, backward-compatible order:
-`nix log` over ssh-ng (Gap A) → enrich results → stream + close Gap B →
-dedup/attach → introspection → elastic-backend friendliness → converge on
-`ssh-ng://`. Throughout, the serve protocol stays additive so **Hydra
-keeps working** (G7), the design **cooperates with elastic multi-tenant
-backends like nixbuild.net** rather than working around them (G6), and the
+`nix log` over ssh-ng (Gap A) → enrich results + fail-loud (Gap C / G8) →
+stream + close Gap B → dedup/attach → introspection → elastic-backend
+friendliness → converge on `ssh-ng://`. Throughout, the serve protocol
+stays additive so **Hydra keeps working** (G7), the design **cooperates
+with elastic multi-tenant backends like nixbuild.net** rather than working
+around them (G6), and the
 eval-store/build-store split — already functional — simply inherits the
 same uniform logging as everything else.
