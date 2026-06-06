@@ -31,10 +31,10 @@ Everything below is what is *not* in that list.
 
 ## 1. Genuinely open — needs a human decision
 
-Most of this tier is now resolved by operational decisions O1–O5 (rows marked
-✅). The two still genuinely open are **1.5** (`QueryActiveBuilds` privacy
-default) and **1.6** (elastic-capacity advertisement) — both carry product/policy
-judgment rather than a purely technical answer.
+**All resolved** by operational decisions O1–O7 (rows marked ✅). O1–O5 were
+technical/operational calls; O6 (`QueryActiveBuilds` privacy default) and O7
+(elastic-capacity advertisement) were the two product/policy forks, decided by
+the project. Nothing in this tier remains open.
 
 | # | Open point | Source | Why it matters / what is needed |
 |---|---|---|---|
@@ -42,8 +42,8 @@ judgment rather than a purely technical answer.
 | 1.2 | ✅ **RESOLVED — Coordinator crash-recovery posture.** v1 is safe-degrade, no persistence/re-adoption: builders are forked `dieWithParent`/in a coordinator-killable cgroup so a crash releases their `PathLocks`; relay children fall back to building locally (coalescing via `PathLocks`); the existing lock/validity logic guarantees no corruption/double-build. Persistent registry + re-adoption deferred as evidence-gated hardening. See decisions record [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5-open-points-12). | spike §6 Q5; §2.2 | — |
 | 1.3 | ✅ **RESOLVED (posture) — Coordinator throughput.** v1 = single-threaded event loop; per-build-key sharding deferred and gated on the spike §4.2 throughput measurement; below the wire, so a later sharded design is an internal change. See decisions record [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7-open-points-13). | spike §6 Q7; spike-review §2.3 | — |
 | 1.4 | ✅ **RESOLVED — Lazy-spawn lifecycle.** Daemon parent is sole spawner (lazy, at first capability-negotiated request); fallback uses a `flock`/`O_EXCL` + socket-`bind` election, stale-socket reclaim, configurable idle-exit grace (default 10 min), and a `GOING_AWAY`/decline-and-respawn handshake. See decisions record [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8-open-points-14). | spike §3.1, §6 Q8; spike-review §2.4 | — |
-| 1.5 | **`QueryActiveBuilds` default privacy** for untrusted callers — aggregate count vs. nothing. | RFC §10 Q5; spike §6 Q6 | The coordinator enforces whatever is chosen (single chokepoint, spike §3.7.3), but the policy itself is a project call, unmade. |
-| 1.6 | **Elastic-capacity advertisement** — how a builder declares "I self-schedule / have elastic capacity" (a new machines-spec / store-config field vs. handshake negotiation), and how `maxJobs` degrades to a hint **without** silently overcommitting existing `/etc/nix/machines` files. | RFC §10 Q6 (§4.7.1) | The RFC fixes the *constraint* (must be strictly opt-in; default hard-cap semantics unchanged) but not the *mechanism*. This is the bulk of **G6 / Phase 6**. |
+| 1.5 | ✅ **RESOLVED — `QueryActiveBuilds` privacy.** Default: untrusted callers see only their own authorized builds (no other-tenant names/keys/existence, no count); operator may opt in to an anonymized aggregate in-flight count. Preserves Blocker 1's no-existence-oracle property. See decisions record [O6](./remote-build-protocol-redesign.decisions.md#operational-decision-o6--queryactivebuilds-privacy-default-rfc-q5-spike-6-q6-open-points-15). | RFC §10 Q5; spike §6 Q6 | — |
+| 1.6 | ✅ **RESOLVED — Elastic-capacity advertisement.** Support both a handshake-advertised capability and a per-machine operator field (operator config overrides advertisement); when either selects elastic, the hook stops slot-gating and treats `maxJobs` as a hint. Strictly opt-in; default hard-cap semantics unchanged. Lands Phase 6. See decisions record [O7](./remote-build-protocol-redesign.decisions.md#operational-decision-o7--elastic-capacity-advertisement-rfc-q6-open-points-16). | RFC §10 Q6 (§4.7.1) | — |
 | 1.7 | ✅ **RESOLVED — Replay cap + truncation UX.** Byte cap, default 4 MiB (configurable); over the cap, ~1 MiB head + ~3 MiB tail with an explicit `…N frames / M bytes truncated…` marker frame; `replayed=true` tagging; post-build handoff to the persisted log via `QueryBuildLog`. See decisions record [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17). | RFC §10 Q1 (remainder); spike §3.5, §6 Q4 | — |
 
 ## 2. Decided in principle, but not yet validated (these gate a freeze)
@@ -102,10 +102,9 @@ name.
 
 The operational half of the design (Gaps A/B/C) is decision-complete and ready.
 The dedup/attach half is *architecturally* settled (coordinator process, frozen
-key/auth rule, agreed cancel matrix, chosen serve-3.0 core) but still owes: a
-handful of **deployment/operational decisions** (§1; deployment, crash-recovery,
-throughput posture, lazy-spawn, and replay tuning are now decided — O1–O5 —
-leaving only `QueryActiveBuilds` privacy and elastic-capacity advertisement),
-three **validation prototypes/tests** that gate
-the Phase 3 freeze (§2), and — the long pole — a **named Hydra maintainer and an
-open coordination thread** before serve 3.0 can be frozen (§2.3).
+key/auth rule, agreed cancel matrix, chosen serve-3.0 core), and **all of §1's
+deployment/operational/policy decisions are now made (O1–O7)**. What still
+remains is **execution, not clarification**: the three **validation
+prototypes/tests** that gate the Phase 3 freeze (§2), and — the long pole — a
+**named Hydra maintainer and an open coordination thread** before serve 3.0 can
+be frozen (§2.3). The only doc-level loose ends are the consistency nits in §3.

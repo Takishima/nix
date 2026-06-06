@@ -1150,12 +1150,20 @@ the log fixes.
    version; bump `SERVE_PROTOCOL_VERSION` to 3.0 only on four named freeze
    criteria (incl. a named Hydra maintainer's sign-off). See §7. The Hydra
    coordination *thread* itself remains out of scope for this document.
-5. **`QueryActiveBuilds` privacy.** Default verbosity for untrusted
-   callers (aggregate counts only vs. nothing).
-6. **Elastic-capacity advertisement.** How a builder declares "I
-   self-schedule / have elastic capacity" — a new field in the machines
-   spec / store config, or negotiated in the handshake? And how `maxJobs`
-   degrades to a hint without breaking existing `/etc/nix/machines` files.
+5. **`QueryActiveBuilds` privacy.** ✅ **RESOLVED**
+   ([O6](./remote-build-protocol-redesign.decisions.md#operational-decision-o6--queryactivebuilds-privacy-default-rfc-q5-spike-6-q6-open-points-15)).
+   Default: untrusted callers see **only their own authorized builds and nothing
+   else** (no other-tenant names/keys/existence, no count); an operator may opt in
+   to an **anonymized aggregate in-flight count**. Preserves Blocker 1's
+   no-existence-oracle property.
+6. **Elastic-capacity advertisement.** ✅ **RESOLVED**
+   ([O7](./remote-build-protocol-redesign.decisions.md#operational-decision-o7--elastic-capacity-advertisement-rfc-q6-open-points-16)).
+   Support **both** a handshake-advertised "elastic/self-scheduling" capability
+   **and** a per-machine operator field (operator config overrides
+   advertisement); when either selects elastic, the hook stops gating on local
+   slot locks and treats `maxJobs` as a hint. **Strictly opt-in** — default
+   hard-cap `maxJobs` semantics are unchanged, so existing `/etc/nix/machines`
+   files are never silently overcommitted. Lands in Phase 6.
 7. **Reuse key vs. trust.** ✅ **RESOLVED**
    ([Blocker 1](./remote-build-protocol-redesign.decisions.md#blocker-1--trust-under-ca-key-merge-rfc-q3q7-spike-3854)).
    The key and its authorisation are specified together: key = the resolved

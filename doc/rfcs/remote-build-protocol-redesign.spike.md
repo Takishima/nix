@@ -845,8 +845,11 @@ it is its own RFC, not a spike.
    (the spike's §2.2 floor). Persistent registry + re-adoption is deferred as a
    separate, evidence-gated hardening item, **not** a Phase 3 prerequisite.
 6. **`QueryActiveBuilds` default privacy for untrusted callers (RFC Q5).**
-   Aggregate count vs. nothing — a policy choice the coordinator enforces but the
-   project must set.
+   ✅ **RESOLVED** — decisions record
+   [O6](./remote-build-protocol-redesign.decisions.md#operational-decision-o6--queryactivebuilds-privacy-default-rfc-q5-spike-6-q6-open-points-15):
+   default is own-authorized-builds-only with no count; an operator may opt in to
+   an anonymized aggregate in-flight count. Preserves the no-existence-oracle
+   property; enforced at the single `QUERY_ACTIVE` chokepoint (§3.7.3).
 7. **Coordinator throughput and concurrency ceiling — §2.3.** ✅ **RESOLVED
    (posture)** — decisions record
    [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7-open-points-13):

@@ -780,6 +780,126 @@ public-wire surface.
 
 ---
 
+## Operational decision O6 — `QueryActiveBuilds` privacy default (RFC Q5, spike §6 Q6, open-points §1.5)
+
+> A **policy** decision (chosen by the project) about default visibility; it
+> reuses Blocker 1's per-observable authorization and adds no new authz
+> mechanism. Filtered in one chokepoint (the coordinator's `QUERY_ACTIVE`
+> handler, spike §3.7.3).
+
+### 1. Decision
+
+**Default: an untrusted caller sees only the builds it is itself authorized to
+build, and nothing else** — no other tenant's names, keys, per-build detail, or
+existence signal, and **no aggregate count**. An operator **may opt in** (a
+setting, e.g. `query-active-builds-aggregate = true`) to additionally expose an
+**anonymized aggregate in-flight count** (a single scalar: total builds running),
+carrying no keys/names/per-build detail. Trusted callers retain full
+introspection. Rationale:
+
+- Default-off keeps the **no-existence-oracle** property of Blocker 1 intact: an
+  aggregate count is a coarse cross-tenant load side-channel, so it is exposed
+  only on an explicit operator opt-in, never by default.
+- When enabled, the count is the *only* cross-tenant-derived datum and carries no
+  per-build identity, so it can never become a per-key existence oracle (you
+  cannot probe "is *this* drv building" from a global integer).
+
+### 2. Rejected alternatives
+
+- **Always expose an aggregate count.** Rejected: leaks coarse cross-tenant
+  load by default, weakening the conservative posture for a monitoring nicety.
+- **Never offer a count, even as opt-in.** Rejected: removes a legitimate
+  operator monitoring affordance with no security gain over default-off.
+
+### 3. What it commits
+
+Default filtering = own-authorized-builds-only; an opt-in setting for an
+anonymized aggregate count; both enforced at the single `QUERY_ACTIVE` chokepoint
+reusing Blocker 1's per-observable authz. `QueryActiveBuilds` is already a
+version-gated op (RFC §7); this fixes its **default policy**, not a new field
+(the optional count is one scalar in the response).
+
+### 4. Residual risk and the guarding test
+
+- **Risk:** even an anonymized count reveals that *some* activity exists.
+  Bounded: off by default, no identity, operator-chosen.
+- **Guarding test (extends Blocker 1's existence-oracle test):** an untrusted
+  caller with the setting **off** sees only its own builds and no count; with it
+  **on** sees its own builds plus a count but **no** other-tenant names/keys; and
+  a `QUERY_ACTIVE` for a specific unauthorized in-flight key is byte- and
+  timing-identical to one for a non-existent key.
+
+### 5. Owner + follow-up
+
+- **Owner:** security reviewer + libstore/protocol maintainer.
+- **Follow-up:** implement the default filter + the opt-in aggregate setting in
+  Phase 5 (`QueryActiveBuilds`), with the trust test above.
+
+---
+
+## Operational decision O7 — Elastic-capacity advertisement (RFC Q6, open-points §1.6)
+
+> A **Phase 6 / G6** decision. It touches the wire only additively (a negotiated
+> capability flag, gated like every other new capability, RFC §7) and is
+> **strictly opt-in** so existing `/etc/nix/machines` files are never silently
+> overcommitted.
+
+### 1. Decision
+
+Support **both** signals, with operator config taking precedence:
+
+- **(a) Handshake advertisement.** A builder may advertise an
+  **"elastic / self-scheduling"** capability during the protocol handshake (a
+  negotiated capability alongside the version bump, RFC §7), so a backend like
+  nixbuild.net "just works" without per-user config.
+- **(b) Per-machine operator field.** An operator may force the behaviour via a
+  new field in `/etc/nix/machines` / store config (a `self-scheduled`/`elastic`
+  flag), which **overrides** the advertisement in both directions (force-on for a
+  non-advertising backend; force-off to correct one that mis-advertises).
+
+When either signal selects elastic, the distributed-build hook **stops gating on
+local per-slot file locks** for that builder (`build-remote.cc:151-177`) and
+treats `maxJobs` as a concurrency **hint**, not a hard cap.
+
+**Fixed constraint (RFC §4.7.1):** this is **strictly opt-in**. Absent both
+signals, `maxJobs` keeps today's hard-cap semantics, so existing machines files
+are unchanged and fixed-size builders are never silently overcommitted.
+
+### 2. Rejected alternatives
+
+- **Handshake only.** Rejected: no operator override — can't force a
+  non-advertising backend, can't correct a mis-advertising one, no manual
+  control.
+- **Config only.** Rejected: every elastic backend must be hand-configured by
+  every user, ignoring that capable backends can simply advertise.
+- **Change `maxJobs` to a hint by default.** Rejected (RFC §4.7.1, review §4):
+  silently overcommits fixed-size machines operators rely on.
+
+### 3. What it commits
+
+A negotiated handshake **capability flag** (version-gated) **+** a per-machine
+config **field**; **operator config overrides advertisement**; default-off
+hard-cap `maxJobs` semantics unchanged. Lands in **Phase 6**.
+
+### 4. Residual risk and the guarding test
+
+- **Risk:** a backend advertises elastic but is actually fixed-size. Mitigated by
+  the operator force-off override and by the whole behaviour being opt-in.
+- **Guarding test:** (a) a builder with **neither** signal keeps hard-cap
+  `maxJobs` (no slot overcommit, today's behaviour); (b) an **advertised**-elastic
+  builder → the hook does not gate on slot locks and treats `maxJobs` as a hint;
+  (c) operator **force-off** overrides an advertised-elastic builder; (d) operator
+  **force-on** enables a non-advertising builder.
+
+### 5. Owner + follow-up
+
+- **Owner:** libstore/protocol maintainer (+ `build-remote`/`machines` owner).
+- **Follow-up:** Phase 6 — implement the handshake capability, the machines-spec
+  field, the precedence rule, and the slot-gating change at
+  `build-remote.cc:151-177`.
+
+---
+
 ## Cross-cutting answers (all three blockers)
 
 - **Identical Build Session wire for single-process and stock-daemon backends?**
