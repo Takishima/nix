@@ -532,12 +532,17 @@ table lives in the decisions record,
 
 The broadcaster keeps a bounded **replay buffer** of the structured log so
 far (full log up to a configurable cap, then switch to "head + tail with a
-truncation marker"). On attach, the server replays the buffer to the new
-session as ordinary log frames — flagged with a `replayed=true` marker so
+truncation marker"). **The cap is now decided** *(decisions record,
+[O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17))*:
+a configurable **byte cap, default 4 MiB**, over which the buffer keeps a
+**~1 MiB head + ~3 MiB tail** with an explicit `…N frames / M bytes
+truncated…` marker frame (head preserves the configure/early-failure
+context, tail the live edge). On attach, the server replays the buffer to the
+new session as ordinary log frames — flagged with a `replayed=true` marker so
 the client can render them dimmed / collapse them — then transitions the
 session to the live stream. After the build completes, the persisted log
 (§4.4) is the source of truth for any further joiners (they get the whole
-thing via the log-fetch path, §4.5).
+thing via the log-fetch path, §4.5); the cap bounds only *live* memory.
 
 The buffer's *location* is determined by §4.3.3: in a single-process
 backend it is plain process memory; in the fork-per-connection daemon it
@@ -590,6 +595,16 @@ candidate mechanisms, in rough order of increasing scope:
    and the existing lock/validity logic guarantees no corruption or
    double-build; a persistent registry that lets builds survive a restart is
    deferred as evidence-gated hardening.
+   Its **lifecycle** *(decisions record,
+   [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8-open-points-14))*
+   is lazy-at-first-capability-request with the daemon parent as sole spawner
+   (a `flock`/`O_EXCL` + socket-`bind` election and decline-and-respawn handshake
+   cover the non-daemon fallback and stale-socket reclaim), and its **v1
+   throughput posture** *(decisions record,
+   [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7-open-points-13))*
+   is a single-threaded event loop, with per-build-key sharding deferred and
+   gated on the spike's throughput measurement — a later internal change, since
+   the coordinator is below the wire.
 2. **Shared memory + a published log ring buffer**, keyed on the resolved
    drv, with the building child as writer and attaching children as
    readers, plus a small shared registry/refcount table. Avoids a new

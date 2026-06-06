@@ -830,9 +830,12 @@ it is its own RFC, not a spike.
    The behaviour when the originating session detaches but joiners remain is
    settled (build continues); the interaction with `--keep-going`, explicit build
    roots, and per-build timeouts needs an agreed matrix before Phase 3.
-4. **Replay cap default and truncation UX (RFC Q1) — §3.5.** The *location* is
-   decided (coordinator memory); the concrete byte cap and the head+tail
-   truncation-marker presentation for very long builds is a tuning/UX call.
+4. **Replay cap default and truncation UX (RFC Q1) — §3.5.** ✅ **RESOLVED** —
+   decisions record
+   [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17):
+   byte cap (default 4 MiB), head (~1 MiB) + tail (~3 MiB) with an explicit
+   truncation-marker frame, `replayed=true` tagging, post-build handoff to the
+   persisted log via `QueryBuildLog`. Cap and split are configurable/tunable.
 5. **Coordinator crash-recovery posture.** ✅ **RESOLVED** — decisions record
    [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5-open-points-12):
    **v1 is safe-degrade, no persistence/re-adoption.** Builders are forked
@@ -844,14 +847,17 @@ it is its own RFC, not a spike.
 6. **`QueryActiveBuilds` default privacy for untrusted callers (RFC Q5).**
    Aggregate count vs. nothing — a policy choice the coordinator enforces but the
    project must set.
-7. **Coordinator throughput and concurrency ceiling — §2.3.** Every build and
-   every log frame for every connection funnels through one coordinator event
-   loop (O(frames × subscribers) centrally) — a single serialization point in
-   tension with G6's busy-builder/elastic scenario. Whether a single event loop
-   suffices, or the coordinator needs a sharded/multi-threaded design, is a
-   scaling decision the prototype's throughput measurement (§4.2) should inform.
-8. **Lazy-spawn lifecycle posture — §2.4/§3.1.** The spawn-election and
-   "decline-and-respawn" handshakes for (a) two children racing to spawn the
-   coordinator and (b) idle-exit between connect and first use are sketched but
-   not specified; the production approach (election primitive, idle-exit grace,
-   whether to spawn at daemon start instead of lazily) needs a decision.
+7. **Coordinator throughput and concurrency ceiling — §2.3.** ✅ **RESOLVED
+   (posture)** — decisions record
+   [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7-open-points-13):
+   v1 ships a **single-threaded event loop**; sharding (natural axis: the build
+   key) is deferred and **gated on the §4.2 throughput measurement**. Below the
+   wire, so a later sharded design is an internal change with no back-compat
+   impact.
+8. **Lazy-spawn lifecycle posture — §2.4/§3.1.** ✅ **RESOLVED** — decisions
+   record
+   [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8-open-points-14):
+   within one daemon the parent is the sole spawner (lazy, at first
+   capability-negotiated request); the fallback uses a `flock`/`O_EXCL`-lockfile
+   + socket-`bind` election, stale-socket reclaim, a configurable idle-exit grace
+   (default 10 min), and a `GOING_AWAY`/decline-and-respawn handshake.

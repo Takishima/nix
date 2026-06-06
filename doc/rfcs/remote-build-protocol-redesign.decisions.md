@@ -605,6 +605,181 @@ never to incorrectness.
 
 ---
 
+## Operational decision O3 — Lazy-spawn lifecycle (spike §6 Q8, open-points §1.4)
+
+> Operational, **no public-wire** surface. Mostly *defanged by O1* (supervised
+> spawn is canonical; lazy spawn is the fallback), so this only specifies the
+> fallback's election, idle-exit, and respawn behaviour.
+
+### 1. Decision
+
+- **Within one daemon there is no election.** The single `daemonLoop` parent is
+  the sole spawner (O1) and spawns the coordinator **lazily, on the first
+  capability-negotiated build request** — not at daemon start — so installs that
+  never use cross-client dedup pay nothing.
+- **Election primitive for the fallback / multi-daemon case: the socket path
+  itself.** A would-be coordinator claims it by taking an exclusive sidecar lock
+  (`coordinator.socket.lock` via `flock`/`O_EXCL`) and then `bind()`ing
+  `$NIX_STATE_DIR/coordinator.socket`; everyone else `connect()`s. At most one
+  lock-holder binds, so the race is resolved atomically by the kernel — no
+  bespoke election protocol.
+- **Stale socket reclaim.** A `connect()` that fails `ECONNREFUSED`/`ENOENT`
+  (coordinator crashed, socket left behind — O2) triggers a claim attempt (take
+  lock, `unlink` the stale socket, `bind`), so exactly one child respawns.
+- **Idle-exit (lazy mode).** A lazily-spawned coordinator idle-exits after a
+  **configurable grace period (default proposal 10 min)** with zero builds and
+  zero subscribers, so transient/test setups do not leak a process. Under daemon
+  supervision idle-exit is optional — the parent reaps it on daemon stop.
+- **Decline-and-respawn.** A coordinator that has begun shutdown stops accepting
+  and answers a late connector with `GOING_AWAY` (or the child simply sees EOF);
+  the child re-runs the election and retries, bounded. This closes the
+  "idle-exit between `connect()` and first request" race (spike §3.1).
+
+### 2. Rejected alternatives
+
+- **Spawn unconditionally at daemon start.** Rejected: wastes a coordinator
+  process on the majority of installs that never dedup; lazy-at-first-capability
+  is free when unused.
+- **A dedicated election / lock-manager daemon.** Rejected: the socket `bind` +
+  lockfile is sufficient and introduces no new long-lived component.
+- **No idle-exit in lazy mode.** Rejected: leaks an orphaned coordinator in
+  transient and test setups.
+
+### 3. What it commits
+
+The lockfile+`bind` election; lazy-at-first-capability-request spawn; a
+configurable idle-exit grace; the `GOING_AWAY`/decline-and-respawn handshake. No
+public-wire surface.
+
+### 4. Residual risk and the guarding test
+
+- **Risk:** lock/`bind`/`unlink` reclaim has a narrow window under heavy crash
+  churn; bounded retries plus the O2 `PathLocks` floor keep it correct, never
+  corrupt.
+- **Guarding test:** (a) N children issue their first capability-negotiated
+  request simultaneously → **exactly one** coordinator and one socket; (b) force
+  idle-exit then connect → decline-and-respawn yields a fresh coordinator and the
+  build succeeds; (c) kill the coordinator leaving a stale socket → the next
+  child reclaims (`unlink`+`bind`) and succeeds.
+
+### 5. Owner + follow-up
+
+- **Owner:** libstore/daemon maintainer.
+- **Follow-up:** implement the election + idle-exit + decline-and-respawn in the
+  spike prototype (spike §4.1), replacing the §3.1 sketch.
+
+---
+
+## Operational decision O4 — Coordinator throughput posture (spike §6 Q7, open-points §1.3)
+
+> Operational, **no public-wire** surface. A *posture* decision plus a
+> measurement gate — it deliberately does not pre-commit a scaling design.
+
+### 1. Decision
+
+**v1 ships a single-threaded coordinator event loop** (the §3 design).
+Sharding/multithreading is **deferred and gated on the prototype's throughput
+measurement** (spike §4.2). Rationale and guard-rails:
+
+- The coordinator's central per-frame cost is only "append to replay buffer +
+  persisted-log writer + write to each subscriber fd"; the **heavy per-client
+  relay already lives in the connection children** (spike-review §2.3), so the
+  central serialization point is far lighter than "all log traffic, fully
+  processed, in one thread."
+- **The natural shard axis, if needed, is the build key:** builds are
+  independent and the registry is the only shared structure, so a later design
+  can drain build→subscriber fan-out on a per-build worker / thread pool behind
+  the single-threaded registry without a redesign.
+- Because the coordinator is **below the wire** (spike §5.1), moving from one
+  loop to a sharded design later is an **internal** change with no wire or
+  back-compat impact — so fixing the v1 posture now forecloses nothing.
+
+### 2. Rejected alternatives
+
+- **Build a sharded/multi-threaded coordinator now.** Rejected: premature
+  without load data, and it adds concurrency hazards to the *trust-critical*
+  component before its real load is known.
+- **Cap concurrent builds at the coordinator to dodge throughput.** Rejected:
+  reintroduces client-side-style gating that fights **G6** (elastic backends),
+  the very thing the redesign exists to stop.
+
+### 3. What it commits
+
+v1 = single event loop; the spike §4.2 throughput measurement as the gate; the
+build-key shard axis named for a future sharded design if measurement demands
+it. No public-wire surface.
+
+### 4. Residual risk and the guarding test
+
+- **Risk:** a single loop becomes the bottleneck under extreme build/subscriber
+  fan-out. **Guard:** the spike §4.2 measurement (coordinator CPU + per-frame
+  fan-out cost under dozens of parallel builds × several subscribers) is the
+  trigger to shard, with a provisional ceiling recorded to revisit.
+
+### 5. Owner + follow-up
+
+- **Owner:** libstore/protocol maintainer.
+- **Follow-up:** record the throughput numbers from the spike prototype; only if
+  they exceed the provisional ceiling, design the per-build-key sharded loop.
+
+---
+
+## Operational decision O5 — Replay cap default and truncation UX (RFC Q1 remainder, spike §6 Q4, open-points §1.7)
+
+> Operational/UX; the replay buffer's *location* was already decided (coordinator
+> memory, spike §3.5). This fixes only the **cap and the truncation
+> presentation**. The cap is coordinator-internal; the truncation marker is an
+> ordinary log frame, so there is **no public-wire** surface.
+
+### 1. Decision
+
+- **Byte cap, default 4 MiB** of structured frames per build (matching the spike
+  §3.5 proposal), **configurable** (a `…-replay-cap` setting).
+- **Over the cap, switch to head + tail:** retain the first **~1 MiB head** and
+  the last **~3 MiB tail** (tunable within the cap) with an explicit synthetic
+  frame `…N frames / M bytes truncated…` at the seam. The head preserves the
+  configure / early-failure context that explains most failures; the tail
+  preserves the live edge a late joiner is about to follow.
+- **Late-joiner UX:** replayed frames carry `replayed=true` (already in spike
+  §3.5 / RFC §4.3.1) so clients render them dimmed/collapsed; the truncation
+  marker is a distinct, visible frame.
+- **Post-build:** the buffer is discarded; any further joiner gets the **whole**
+  log via the persisted-log fetch path (Phase 0 `QueryBuildLog`). The cap bounds
+  only *live* memory — never the durable log.
+
+### 2. Rejected alternatives
+
+- **Unbounded full-log buffer.** Rejected: coordinator OOM on kernel/LLVM-scale
+  logs.
+- **Tail-only.** Rejected: drops the configure-phase context that diagnoses most
+  failures.
+- **A line/frame-count cap instead of bytes.** Rejected: one pathologically long
+  line is unbounded; bytes are the safe currency.
+
+### 3. What it commits
+
+A byte cap (default 4 MiB), the head+tail split with a truncation-marker frame,
+`replayed=true` tagging, and post-build handoff to the persisted log. No
+public-wire surface.
+
+### 4. Residual risk and the guarding test
+
+- **Risk:** chosen head/tail split discards a relevant middle section. Bounded:
+  the full log is always fetchable post-build via `QueryBuildLog`.
+- **Guarding test:** a long-build replay test asserting head + tail + the
+  truncation marker, that a late joiner's `replayed` prefix + live tail equals
+  the originator's stream minus the truncated middle, and that coordinator memory
+  stays bounded under a multi-hundred-MiB log.
+
+### 5. Owner + follow-up
+
+- **Owner:** libstore/protocol maintainer (+ a UX reviewer for the marker
+  rendering).
+- **Follow-up:** tune the cap and the head/tail split from the prototype's real
+  logs; wire the configurable setting.
+
+---
+
 ## Cross-cutting answers (all three blockers)
 
 - **Identical Build Session wire for single-process and stock-daemon backends?**

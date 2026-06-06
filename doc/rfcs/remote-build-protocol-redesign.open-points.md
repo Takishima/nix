@@ -31,18 +31,20 @@ Everything below is what is *not* in that list.
 
 ## 1. Genuinely open — needs a human decision
 
-These have no decision recorded in any of the five documents; they are carried
-explicitly as open questions.
+Most of this tier is now resolved by operational decisions O1–O5 (rows marked
+✅). The two still genuinely open are **1.5** (`QueryActiveBuilds` privacy
+default) and **1.6** (elastic-capacity advertisement) — both carry product/policy
+judgment rather than a purely technical answer.
 
 | # | Open point | Source | Why it matters / what is needed |
 |---|---|---|---|
 | 1.1 | ✅ **RESOLVED — Coordinator deployment model.** Daemon binary in a `--coordinator` role; a separate process supervised/reaped by the `daemonLoop` parent (not a separate codebase, not in-process with the listener); one per store at `$NIX_STATE_DIR/coordinator.socket` (`0660`, peer-cred-verified); run as root, one per machine, **not** per-user; lazy spawn as the no-daemon fallback. See decisions record [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11). | spike §6 Q1; RFC §4.3.3.1 | *(Daemon-restart survival deferred to 1.2.)* |
 | 1.2 | ✅ **RESOLVED — Coordinator crash-recovery posture.** v1 is safe-degrade, no persistence/re-adoption: builders are forked `dieWithParent`/in a coordinator-killable cgroup so a crash releases their `PathLocks`; relay children fall back to building locally (coalescing via `PathLocks`); the existing lock/validity logic guarantees no corruption/double-build. Persistent registry + re-adoption deferred as evidence-gated hardening. See decisions record [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5-open-points-12). | spike §6 Q5; §2.2 | — |
-| 1.3 | **Coordinator throughput / concurrency ceiling** — single event loop vs. sharded/multi-threaded design. Every build and every log frame for every connection funnels through one coordinator (O(frames × subscribers) centrally). | spike §6 Q7; spike-review §2.3 | In direct tension with **G6** (elastic backends), the very scenario the coordinator partly exists to serve. Only a *measurement* is planned (spike §4.2); no decision on the ceiling. |
-| 1.4 | **Lazy-spawn lifecycle posture** — the spawn-election (two children racing to spawn) and the "decline-and-respawn" handshake (idle-exit between connect and first use). Election primitive, idle-exit grace, and spawn-at-daemon-start vs. lazily. | spike §3.1, §6 Q8; spike-review §2.4 | Sketched but not specified. Without it a flaky spawn is misread as a coordination bug. |
+| 1.3 | ✅ **RESOLVED (posture) — Coordinator throughput.** v1 = single-threaded event loop; per-build-key sharding deferred and gated on the spike §4.2 throughput measurement; below the wire, so a later sharded design is an internal change. See decisions record [O4](./remote-build-protocol-redesign.decisions.md#operational-decision-o4--coordinator-throughput-posture-spike-6-q7-open-points-13). | spike §6 Q7; spike-review §2.3 | — |
+| 1.4 | ✅ **RESOLVED — Lazy-spawn lifecycle.** Daemon parent is sole spawner (lazy, at first capability-negotiated request); fallback uses a `flock`/`O_EXCL` + socket-`bind` election, stale-socket reclaim, configurable idle-exit grace (default 10 min), and a `GOING_AWAY`/decline-and-respawn handshake. See decisions record [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8-open-points-14). | spike §3.1, §6 Q8; spike-review §2.4 | — |
 | 1.5 | **`QueryActiveBuilds` default privacy** for untrusted callers — aggregate count vs. nothing. | RFC §10 Q5; spike §6 Q6 | The coordinator enforces whatever is chosen (single chokepoint, spike §3.7.3), but the policy itself is a project call, unmade. |
 | 1.6 | **Elastic-capacity advertisement** — how a builder declares "I self-schedule / have elastic capacity" (a new machines-spec / store-config field vs. handshake negotiation), and how `maxJobs` degrades to a hint **without** silently overcommitting existing `/etc/nix/machines` files. | RFC §10 Q6 (§4.7.1) | The RFC fixes the *constraint* (must be strictly opt-in; default hard-cap semantics unchanged) but not the *mechanism*. This is the bulk of **G6 / Phase 6**. |
-| 1.7 | **Replay cap default value + truncation-marker UX** — the *location* is decided (coordinator memory); the concrete byte cap (proposed ~4 MiB) and the head+tail `…truncated N frames…` presentation for very long builds (kernel/LLVM) are a tuning/UX call. | RFC §10 Q1 (remainder); spike §3.5, §6 Q4 | The only part of Q1 still open. Low risk, but unset. |
+| 1.7 | ✅ **RESOLVED — Replay cap + truncation UX.** Byte cap, default 4 MiB (configurable); over the cap, ~1 MiB head + ~3 MiB tail with an explicit `…N frames / M bytes truncated…` marker frame; `replayed=true` tagging; post-build handoff to the persisted log via `QueryBuildLog`. See decisions record [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17). | RFC §10 Q1 (remainder); spike §3.5, §6 Q4 | — |
 
 ## 2. Decided in principle, but not yet validated (these gate a freeze)
 
@@ -101,9 +103,9 @@ name.
 The operational half of the design (Gaps A/B/C) is decision-complete and ready.
 The dedup/attach half is *architecturally* settled (coordinator process, frozen
 key/auth rule, agreed cancel matrix, chosen serve-3.0 core) but still owes: a
-handful of **deployment/operational decisions** (§1; deployment model and
-crash-recovery are now decided — O1, O2 — leaving throughput ceiling,
-lazy-spawn, query privacy, elastic advertisement, replay tuning), three
-**validation prototypes/tests** that gate
+handful of **deployment/operational decisions** (§1; deployment, crash-recovery,
+throughput posture, lazy-spawn, and replay tuning are now decided — O1–O5 —
+leaving only `QueryActiveBuilds` privacy and elastic-capacity advertisement),
+three **validation prototypes/tests** that gate
 the Phase 3 freeze (§2), and — the long pole — a **named Hydra maintainer and an
 open coordination thread** before serve 3.0 can be frozen (§2.3).
