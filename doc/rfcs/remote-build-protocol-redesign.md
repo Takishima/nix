@@ -19,18 +19,24 @@ machinery behind it has accreted over many years and shows it. Three
 recurring operational complaints motivate this redesign:
 
 1. **You cannot see what a remote build is doing.** When a derivation is
-   built on a remote machine through the distributed-build hook
-   (`ssh://`), the actual builder output (compiler/`make`/test output)
-   never reaches the client. You get the *hook's* own progress activities
-   ("copying dependencies to …", "copying outputs from …") but not the
-   build log itself.
+   built on a remote machine through the distributed-build hook with an
+   `ssh://` (serve protocol) builder, the actual builder output
+   (compiler/`make`/test output) never reaches the client. You get the
+   *hook's* own progress activities ("copying dependencies to …", "copying
+   outputs from …") but not the build log itself. **This is hop-specific,
+   not universal** — see §2.6 for the validated matrix. `ssh-ng://`
+   builders and `ssh-ng://` build *stores* do stream live logs today; the
+   serve (`ssh://`) hop is the one that drops them.
 
-2. **Diagnosing a remote failure is painful.** When a remote build fails,
-   the client receives only a `BuildResult` with a short message such as
-   *"builder for '…' failed with exit code 1"*. The actual log was
-   discarded on the builder, so there is nothing to print and nothing to
-   fetch. `nix log` does not help because the log was never persisted in a
-   place the client can reach.
+2. **You can watch a remote build but cannot retrieve its log
+   afterwards.** With `--store ssh-ng://builder`, logs stream live via the
+   daemon's tunnel logger — but `nix log` against that store throws
+   `unsupported("getBuildLogExact")` (`src/libstore/ssh-store.cc:64-67`,
+   carrying a standing `FIXME: extend daemon protocol`). So if a build
+   failed while you weren't looking, or you want the log after the fact,
+   there is no client-reachable copy. This — not a copying bug — is the
+   dominant pain in the "remote eval store + remote build store" setup
+   (§2.6, Gap A).
 
 3. **The eval-store / build-store split mostly works — except for logs.**
    Driving a remote build store alongside a (local or remote) eval store
@@ -44,7 +50,7 @@ recurring operational complaints motivate this redesign:
    problem: it is problems 1–2 again, and the design must simply not treat
    "build store ≠ eval store" as a special case for logging.
 
-A more subtle issue motivates part of the design:
+Three more issues motivate the rest of the design:
 
 4. **A remote builder has no first-class notion of "this derivation is
    already being built".** If two clients ask the same builder to realise
@@ -54,9 +60,27 @@ A more subtle issue motivates part of the design:
    running behind the builder, and crucially its log/progress is **not**
    fanned out to the second client.
 
+5. **The protocol does not scale to elastic, multi-tenant backends.**
+   Services like [nixbuild.net](https://nixbuild.net) present a *single*
+   endpoint backed by an autoscaling pool ("infinite CPUs"), do their own
+   scheduling, and reuse build results globally across an account. Nix's
+   distributed-build *hook*, by contrast, schedules on the client with
+   per-machine, per-slot **file locks** and a fixed `maxJobs`
+   (`build-remote.cc:40-43,168-177`), and the serve protocol does one
+   synchronous build per connection. The model fights an elastic backend
+   instead of cooperating with it. (§4.7)
+
+6. **Hydra must keep working.** Hydra's queue runner is the largest
+   consumer of the serve protocol, via the deliberately stripped-down
+   `BasicClientConnection`/`BasicServerConnection`
+   (`serve-protocol.hh:96-101`). Any redesign has to be *additive* for
+   Hydra — extending what it can do (structured logs, log fetch, richer
+   results) without breaking the surface it depends on. (§4.8)
+
 This RFC proposes a ground-up redesign that makes remote building
-**streamable**, **introspectable**, and **dedup-aware**, while preserving
-Nix's trust model and providing a clean migration path.
+**streamable**, **introspectable**, **dedup-aware**, and **friendly to
+elastic multi-tenant backends**, while preserving Nix's trust model, Hydra
+compatibility, and a clean migration path.
 
 ## 2. How it works today (and where it hurts)
 
@@ -151,6 +175,64 @@ the design must not regress it and must extend logging to cover it.
   combination, the split behaves like the non-split case — **the missing
   piece is purely the logs (§2.1), not the copying.**
 
+For a remote (`ssh-ng://`) build store, the `.drv` closure is copied from
+the eval store automatically by `RemoteStore::copyDrvsFromEvalStore`
+(`remote-store.cc:548-566`), invoked from `buildPaths`/
+`buildPathsWithResults` (`:571,584`) when `evalStore.get() != this`. Only
+the `.drv` files are copied; build inputs are expected to come from the
+remote's substituters or be uploaded. The `evalStore` argument is *not*
+sent over the wire — it only drives this client-side copy.
+
+### 2.5 What `--eval-store auto --store ssh-ng://builder` does today
+
+This is nixbuild.net's recommended invocation, so it is worth tracing end
+to end:
+
+1. **Evaluate locally** (`--eval-store auto` → local store); `.drv`s land
+   in the local eval store.
+2. **Copy the `.drv` closure** to the remote build store
+   (`copyDrvsFromEvalStore`, `remote-store.cc:548-566`).
+3. **Build on the remote daemon** over the worker protocol; its `Worker`
+   runs the build.
+4. **Live logs stream back** via the daemon's `TunnelLogger`
+   (`daemon.cc:50,1054-1059`) → client `processStderr()`
+   (`remote-store.cc:577,593,658`). ✅
+5. **Outputs are fetched back** as needed.
+
+So live logs work. What does *not* work is `nix log` afterwards
+(`ssh-store.cc:64-67`, Gap A below), and — if that remote build store
+itself offloads to `ssh://` builders — the nested build's live log (Gap B
+below).
+
+### 2.6 Validated log-flow matrix (as of this writing)
+
+| Configuration | Live logs to client | `nix log` after the fact |
+|---|---|---|
+| Local store | ✅ direct logger | ✅ `LocalFSStore` |
+| `unix://` daemon | ✅ `TunnelLogger` | ✅ (daemon persists) |
+| `--store ssh-ng://` (direct daemon build) | ✅ `TunnelLogger` | ❌ `getBuildLogExact` `unsupported` (`ssh-store.cc:64-67`) |
+| `--eval-store … --store ssh-ng://` | ✅ | ❌ same |
+| `mounted-ssh-ng://` | ✅ | ✅ via mounted FS (`ssh-store.cc:181-184`) |
+| `--builders 'ssh://…'` (serve hook) | ❌ inner build log not forwarded upstream | ⚠️ persisted only on that daemon |
+| `--builders 'ssh-ng://…'` (hook) | ✅ hook forwards JSON (`derivation-building-goal.cc:739-746`) | ⚠️ persisted only on that daemon |
+
+Two precise defects fall out of this matrix:
+
+* **Gap A — `nix log` is unsupported over `ssh-ng`.** You can watch a build
+  live but cannot retrieve its log later, because `SSHStore` does not
+  implement `getBuildLogExact` (`ssh-store.cc:64-67`, with the standing
+  `FIXME: extend daemon protocol, move implementation to RemoteStore`).
+  This is the dominant complaint in the remote-eval + remote-build-store
+  configuration.
+* **Gap B — the serve (`ssh://`) hop drops live logs upstream.** When a
+  daemon offloads to an `ssh://` builder, `buildWithHook` persists the
+  inner log to a local `LogFile` but does **not** re-emit it to the
+  ambient (tunnel) logger, so an upstream worker-protocol client sees
+  nothing live for that sub-build. `ssh-ng://` sub-builders do propagate,
+  via the JSON forwarding at `derivation-building-goal.cc:739-746`.
+
+The redesign must close both gaps and make the matrix uniformly ✅/✅.
+
 ## 3. Goals and non-goals
 
 ### Goals
@@ -160,7 +242,10 @@ the design must not regress it and must extend logging to cover it.
   identical in fidelity to a local build.
 * **G2 — Durable diagnostics.** On failure (and success), the full build
   log is persisted on the builder and is fetchable by the client by
-  derivation, after the fact, without manual SSH.
+  derivation, after the fact, without manual SSH. Concretely this means
+  closing **Gap A**: `nix log` must work over `ssh-ng://`
+  (`getBuildLogExact` implemented over the worker protocol), and **Gap B**:
+  a sub-build behind a serve hop must surface its log upstream.
 * **G3 — Dedup & attach.** Concurrent requests for the same derivation on
   one builder coalesce into a single build, and **every** waiter follows
   the same live log (with replay for late joiners).
@@ -173,6 +258,16 @@ the design must not regress it and must extend logging to cover it.
   headline goal.)
 * **G5 — Introspection.** The state of a builder (in-flight builds,
   queue, who is attached) is queryable for diagnostics and tooling.
+* **G6 — Friendly to elastic, multi-tenant backends.** The protocol
+  cooperates with a single endpoint that fronts an autoscaling pool and
+  does its own scheduling and global build reuse (the nixbuild.net model):
+  concurrency is backend-negotiated rather than gated by client-side slot
+  locks, many builds can be in flight per endpoint, and dedup/reuse is a
+  first-class result, not an accident. (§4.7)
+* **G7 — Hydra stays first-class.** Everything new is additive over the
+  serve protocol's `BasicClientConnection`/`BasicServerConnection`
+  (`serve-protocol.hh:96-101`); Hydra can adopt structured logs and log
+  fetch incrementally and is never forced to. (§4.8)
 
 ### Non-goals
 
@@ -339,16 +434,34 @@ suppression in `opServe` (`nix-store.cc:908-909`) for protocol versions
 that support log streaming, and ensuring the daemon path persists too
 (it already can: `daemon.cc:1010`).
 
-### 4.5 Fetching logs after the fact (G2)
+### 4.5 Fetching logs after the fact (G2 / Gap A)
 
-Add a first-class **`FetchBuildLog`** command (serve protocol) / store
-method so a client can ask a builder for a derivation's persisted log
-directly, returning the same bytes `nix log` would show locally. This
-closes the loop: even if the client wasn't attached during the build (or
-detached early), `nix log <drv>` against the remote build store returns
-the real log. `LogStore` already provides `getBuildLog`/`getBuildLogExact`
-(`log-store.cc`, `local-fs-store.cc:160`); this just exposes it over the
-wire and wires `nix log`'s store resolution to consult the build store.
+Add a first-class **`QueryBuildLog`** operation to **both** protocols so a
+client can ask a builder for a derivation's persisted log directly,
+returning the same bytes `nix log` would show locally. This closes the
+loop: even if the client wasn't attached during the build (or detached
+early), `nix log <drv>` against the remote build store returns the real
+log.
+
+* **Worker protocol (`ssh-ng://`) — closes Gap A.** Implement the standing
+  `FIXME` at `ssh-store.cc:64-67`: add a worker-protocol op so
+  `RemoteStore`/`SSHStore::getBuildLogExact` forwards to the daemon's
+  `LogStore` instead of throwing `unsupported`. After this, `nix log` works
+  against any `ssh-ng://` store, which is the single most-requested fix in
+  the validated matrix (§2.6).
+* **Serve protocol.** Add the analogous command for `ssh://` builders and
+  Hydra.
+
+`LogStore` already provides `getBuildLog`/`getBuildLogExact` server-side
+(`log-store.cc`, `local-fs-store.cc:160`); this work is purely exposing it
+over the two wires and wiring `nix log`'s store resolution
+(`get-build-log.cc:7-29`) to consult the build store.
+
+To also close **Gap B**, `buildWithHook` must re-emit a sub-build's log
+lines to the *ambient* logger (not only to the local `LogFile`) so they
+tunnel upstream — i.e. feed the parsed `resBuildLogLine`/`resSetPhase`
+JSON (`derivation-building-goal.cc:737-762`) into `worker.act`/`logger`,
+not just `logFile->sink`.
 
 ### 4.6 Logs across the eval/build store split (G4)
 
@@ -375,6 +488,107 @@ The store split already works functionally, so this section is about
   copies the drv closure, opens a Build Session and streams logs (§4.2),
   copies outputs back, and returns extended `BuildResult`s. This is a
   refactor for clarity, not a fix for a functional defect.
+
+### 4.7 Scaling to elastic, multi-tenant backends (G6)
+
+The reference point here is [nixbuild.net](https://nixbuild.net). Its
+public behaviour and documented design tell us what a production backend
+needs from the protocol:
+
+* It is configured as an ordinary builder/store but recommends
+  **`ssh-ng://`** explicitly ("use `ssh-ng://` instead of `ssh://`"), with
+  the canonical invocation `nix build --eval-store auto --store
+  ssh-ng://eu.nixbuild.net`.
+* It presents **one endpoint over an autoscaling pool** ("infinite CPUs")
+  and does its **own scheduling** — "you can set [max-jobs] to anything
+  really, since nixbuild.net will take care of the scheduling and scaling
+  on its own", and it "will not let multiple Nix clients step on each
+  other's toes."
+* It does aggressive **global build reuse**: it checks binary caches first
+  (`cache.nixos.org`), and "if a user tries to build a derivation that
+  already has been built by any user of the same account, the build result
+  will simply [be reused]." Its reuse key is **not** the bare store path
+  but the derivation **together with the content of its inputs** (because a
+  store path encodes dependencies, not contents), scoped per account with
+  trust boundaries (uploaded inputs are usable only by their uploader
+  unless cache-signed or inter-account trust is configured).
+* It offers **introspection**: an SSH "shell" (`list builds --running`,
+  build history) and an HTTP API.
+
+This validates the RFC's direction and sharpens four requirements:
+
+1. **Backend-negotiated concurrency (not client slot locks).** The
+   distributed-build *hook*'s per-machine, per-slot file locking and fixed
+   `maxJobs` (`build-remote.cc:40-43,151-177`) is the wrong model for an
+   elastic backend — it caps parallelism on the client. The `ssh-ng://`
+   *store* path already avoids this (concurrency is just "many requests,
+   scheduled by the backend"), which is exactly why nixbuild.net steers
+   users to `--store ssh-ng://`. The redesign should: (a) let a builder
+   **advertise** that it self-schedules / has elastic capacity, so the hook
+   does not gate on a local slot count; and (b) treat `maxJobs` for such a
+   builder as a client-side concurrency *hint*, not a hard pool size.
+
+2. **Many concurrent builds (and log streams) per endpoint.** Today the
+   serve protocol is one synchronous build per connection, so N parallel
+   builds means N SSH connections (`LegacySSHStore` pools up to
+   `max-connections`, default 1 — `legacy-ssh-store.hh:39`). The worker
+   protocol already multiplexes work and tunnels interleaved `STDERR_*`
+   frames, but build-related activities/log lines must be **tagged with
+   their originating derivation/build id** (§4.2) so many simultaneous
+   builds over one connection remain legible. The **Build Session** (§4.1)
+   is the unit that carries this multiplexing.
+
+3. **Reuse as a first-class, observable result.** nixbuild.net's "don't
+   build if we can reuse" is the same shape as G3 dedup plus substitution.
+   The dedup key should therefore be the **resolved, content-addressed**
+   derivation (resolved drv + input content hashes), not the input-
+   addressed drv path — this matches both CA derivations and nixbuild.net's
+   reuse semantics. The extended `BuildResult` (§4.4) reports
+   `deduplicated` and the existing `Substituted`/`AlreadyValid`/
+   `ResolvesToAlreadyValid` statuses so the client can *see* that a result
+   was reused rather than built.
+
+4. **Reconnection for long builds.** Against an elastic service, a client's
+   connection may drop while a long build continues server-side. Build
+   Sessions with **stable ids** (§4.1) let a client **re-attach** to an
+   in-flight build and resume following its log (replay + live, §4.3.1),
+   instead of losing visibility or re-queuing work. The server-side Build
+   Registry (§4.3) is what makes the build outlive any one connection.
+
+None of this requires Nix to *become* a scheduler (that stays a non-goal,
+and Hydra's job): it requires the protocol to (a) not impose client-side
+scheduling where the backend already does it, (b) multiplex many tagged
+build/log streams, (c) report reuse, and (d) support re-attach. A backend
+like nixbuild.net then "just works" as `--store ssh-ng://`, at full log
+fidelity, instead of being a clever workaround.
+
+### 4.8 Hydra compatibility (G7)
+
+Hydra's `hydra-queue-runner` is the primary serve-protocol consumer; it
+uses the stripped-down `BasicClientConnection`/`BasicServerConnection`
+shared for exactly this purpose (`serve-protocol.hh:96-101`), and
+`BuildDerivation` is explicitly annotated as "Used by hydra-queue-runner"
+(`nix-store.cc:1020`). The redesign is therefore **strictly additive** on
+the serve side:
+
+* The existing serve `BuildDerivation`/`BuildResult` exchange keeps working
+  byte-for-byte at version ≤ 2.8. All new capabilities (log frames §4.2,
+  `QueryBuildLog` §4.5, extended `BuildResult` fields §4.4,
+  `QueryActiveBuilds` §4.3.2, attach/`deduplicated`) are gated behind the
+  serve 3.0 version bump (§7) and the `min(client, server)` handshake
+  (`serve-protocol-connection.cc:8-33`). A 2.x Hydra against a 3.0 builder
+  sees today's behaviour; a 3.0-aware Hydra opts in.
+* The new structured log channel and `QueryBuildLog` are designed so Hydra
+  can **retire its out-of-band log handling** and consume logs the same way
+  the `nix` CLI does — but only when it chooses to.
+* The extended `BuildResult` (`builderId`, `deduplicated`, structured
+  failure, `logRef`) is directly useful to Hydra's result accounting, so
+  the field set should be agreed with Hydra maintainers before freezing the
+  serve 3.0 serialisation. (Tracked as an open question, §10.)
+
+The guiding constraint: **no change may require a coordinated Hydra/Nix
+flag day.** Old Hydra ↔ new Nix and new Hydra ↔ old Nix must both work,
+which the version-gated, additive approach guarantees.
 
 ## 5. End-to-end: what a remote build looks like after this RFC
 
@@ -421,7 +635,7 @@ The redesign preserves the existing rules:
 ## 7. Wire compatibility and versioning
 
 * **Serve protocol** bumps to **3.0**. New capabilities (log frames,
-  `FetchBuildLog`, `QueryActiveBuilds`, extended `BuildResult` fields,
+  `QueryBuildLog`, `QueryActiveBuilds`, extended `BuildResult` fields,
   attach/`deduplicated`) are gated on the negotiated version. The
   handshake already negotiates `min(client, server)` versions
   (`serve-protocol-connection.cc:8-33`); a 3.0 client talking to a 2.8
@@ -441,13 +655,22 @@ The redesign preserves the existing rules:
 
 Each phase is independently shippable and testable.
 
-* **Phase 0 — Persist remote logs (smallest win, biggest relief).**
-  Stop discarding the log on the serve path when the client is new enough:
-  make `keepLog`/`verbosity` suppression conditional, persist via
-  `addBuildLog`, and add `FetchBuildLog` + wire `nix log` to consult the
-  build store. Delivers **G2** with no streaming work.
-  *Touches:* `nix-store.cc` (`opServe`/`getBuildSettings`),
-  `serve-protocol*.{hh,cc}`, `legacy-ssh-store.cc`, `nix/log` command.
+* **Phase 0 — `nix log` over `ssh-ng` + persist remote logs (smallest
+  win, biggest relief).** Two parts, both pure log-retrieval:
+  - **Close Gap A (highest leverage):** implement `getBuildLogExact` over
+    the worker protocol (the `FIXME` at `ssh-store.cc:64-67`) by adding a
+    `QueryBuildLog` op that forwards to the daemon's `LogStore`, so
+    `nix log` works against any `ssh-ng://` store. This alone fixes the
+    most-reported case in the §2.6 matrix.
+  - On the serve path, stop discarding the log (make `keepLog`/`verbosity`
+    suppression conditional at `nix-store.cc:908-909`, persist via
+    `addBuildLog`) and add the serve `QueryBuildLog` command; wire
+    `nix log`'s store resolution (`get-build-log.cc:7-29`) to consult the
+    build store.
+  Delivers **G2/Gap A** with no streaming work.
+  *Touches:* `ssh-store.cc`, `remote-store.{cc,hh}`, `worker-protocol*`,
+  `nix-store.cc` (`opServe`/`getBuildSettings`), `serve-protocol*.{hh,cc}`,
+  `legacy-ssh-store.cc`, `nix/log` command.
 
 * **Phase 1 — Extended `BuildResult`.** Add `logRef`, `builderId`,
   `deduplicated`, structured failure detail; serialise conditionally; have
@@ -457,11 +680,14 @@ Each phase is independently shippable and testable.
   *Touches:* `build-result.{hh,cc}`, `serve-protocol.cc`,
   `worker-protocol*`, `build-remote.cc`.
 
-* **Phase 2 — Live log streaming over serve (bridge).** Add the optional
-  log-frame sequence to `BuildDerivation`/`BuildPaths`; feed frames into
-  the client `Logger`. Delivers **G1** for `ssh://`.
+* **Phase 2 — Live log streaming over serve (bridge) + close Gap B.** Add
+  the optional log-frame sequence to serve `BuildDerivation`/`BuildPaths`
+  and feed frames into the client `Logger` (delivers **G1** for `ssh://`).
+  In the same phase, fix **Gap B**: have `buildWithHook` re-emit a
+  sub-build's parsed log lines to the ambient logger
+  (`derivation-building-goal.cc:737-762`) so nested builds surface upstream.
   *Touches:* `serve-protocol*.{hh,cc}`, `nix-store.cc`,
-  `legacy-ssh-store.cc`.
+  `legacy-ssh-store.cc`, `build/derivation-building-goal.cc`.
 
 * **Phase 3 — Build Registry + attach/replay + fan-out.** Implement the
   server-side registry keyed on resolved drv, the per-Build log
@@ -483,9 +709,21 @@ Each phase is independently shippable and testable.
 * **Phase 5 — Introspection.** `QueryActiveBuilds` + a `nix` subcommand to
   render it; authorisation per §6. Delivers **G5**.
 
-* **Phase 6 — Converge on `ssh-ng://`.** Make `ssh-ng://` the default,
+* **Phase 6 — Elastic-backend friendliness.** Let a builder advertise
+  self-scheduling / elastic capacity so the hook does not gate on local
+  slot locks (`build-remote.cc:151-177`); treat `maxJobs` as a hint for
+  such builders; ensure many tagged build/log streams multiplex cleanly
+  over one connection; key dedup on the resolved/CA derivation so reuse
+  matches the nixbuild.net model; and support session **re-attach** after a
+  dropped connection. Delivers **G6**.
+  *Touches:* `machines.{cc,hh}`, `build-remote.cc`,
+  `build/derivation-building-goal.cc`, registry from Phase 3,
+  serve/worker protocol version negotiation.
+
+* **Phase 7 — Converge on `ssh-ng://`.** Make `ssh-ng://` the default,
   fully-featured distributed-build transport (native streaming + dedup),
-  keep the serve protocol as the documented compatibility/Hydra surface.
+  keep the serve protocol as the documented compatibility/Hydra surface
+  (kept additive throughout per §4.8 / **G7**).
 
 ## 9. Testing strategy
 
@@ -517,25 +755,39 @@ Each phase is independently shippable and testable.
    deep CA graphs the resolution itself can race. Does the registry key on
    the resolved drv only, or also expose a "resolving" pre-state that
    later joiners can attach to?
-4. **Hydra.** Hydra is the largest serve-protocol consumer; the extended
-   `BuildResult` and `FetchBuildLog` should be designed *with* Hydra so it
-   can drop its out-of-band log handling, but that coordination is out of
-   scope for this document.
+4. **Hydra field set.** The extended `BuildResult` and `QueryBuildLog`
+   should be designed *with* Hydra (§4.8) so it can drop its out-of-band
+   log handling; the exact serve 3.0 field set must be frozen with Hydra
+   maintainers. Coordination is out of scope for this document.
 5. **`QueryActiveBuilds` privacy.** Default verbosity for untrusted
    callers (aggregate counts only vs. nothing).
+6. **Elastic-capacity advertisement.** How a builder declares "I
+   self-schedule / have elastic capacity" — a new field in the machines
+   spec / store config, or negotiated in the handshake? And how `maxJobs`
+   degrades to a hint without breaking existing `/etc/nix/machines` files.
+7. **Reuse key vs. trust.** Keying dedup/reuse on the resolved + content-
+   addressed derivation (the nixbuild.net model) interacts with the trust
+   model (§6): inputs uploaded by one client must not be reusable by
+   another unless cache-signed or explicitly trusted. The exact key and its
+   authorisation check need to be specified together.
 
 ## 11. Summary
 
-The capability we want — streamed, structured, persisted build logs — and
-the dedup mechanism we want — share one build, fan out its log — both
-already exist in fragments: streaming in the worker protocol, dedup in the
-in-process `Worker`, log persistence in `LogStore`. The serve protocol,
-which is what distributed builds actually use, has none of it and actively
-throws the log away. This RFC unifies these fragments behind a **Build
-Session** abstraction and a server-side **Build Registry**, delivers the
-operational wins in a phased, backward-compatible order (persist → enrich
-results → stream → dedup/attach → store-split log parity → introspection),
-and sets `ssh-ng://` up as the single production-grade remote build
-transport. The eval-store/build-store split is already functional; the
-redesign's only job there is to make sure logs work the same way they do
-everywhere else.
+Build logs already stream over `ssh-ng://` and persist via `LogStore`, and
+dedup already happens inside the in-process `Worker` — but only in
+fragments. The validated matrix (§2.6) shows the two concrete holes:
+**`nix log` is unsupported over `ssh-ng` (Gap A)** and the **serve
+(`ssh://`) hop drops logs upstream (Gap B)**, while dedup never fans its
+log out to a second client and the protocol fights elastic backends
+instead of cooperating with them.
+
+This RFC unifies the existing fragments behind a **Build Session**
+abstraction and a server-side **Build Registry**, and delivers the
+operational wins in a phased, backward-compatible order:
+`nix log` over ssh-ng (Gap A) → enrich results → stream + close Gap B →
+dedup/attach → introspection → elastic-backend friendliness → converge on
+`ssh-ng://`. Throughout, the serve protocol stays additive so **Hydra
+keeps working** (G7), the design **cooperates with elastic multi-tenant
+backends like nixbuild.net** rather than working around them (G6), and the
+eval-store/build-store split — already functional — simply inherits the
+same uniform logging as everything else.
