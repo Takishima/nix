@@ -163,7 +163,11 @@ are the gate to bumping `SERVE_PROTOCOL_VERSION`.
 
 - **D4 — open the Hydra coordination thread** (RFC Q4 puts the coordination
   itself out of scope of the RFC). This is the **external long pole** — start it
-  early; D3.1/D3.2 cannot complete without it.
+  early; D3.1/D3.2 cannot complete without it. A ready-to-post **opening post is
+  drafted** at
+  [`*.hydra-coordination.md`](./remote-build-protocol-redesign.hydra-coordination.md)
+  (the ask, the frozen-candidate field set + byte order, the back-compat matrix,
+  and the specific questions for Hydra maintainers).
 
 **Owner:** Hydra queue-runner maintainer (sign-off) + libstore/serve-protocol
 maintainer (serializer + version bump).
