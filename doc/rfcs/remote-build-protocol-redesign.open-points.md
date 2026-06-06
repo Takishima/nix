@@ -53,6 +53,12 @@ that must land **before** the Phase 3 wire surface or serve 3.0 can be frozen.
 These are not reopenings — they are the validation debt the decisions themselves
 name.
 
+> **This tier is now consolidated into an executable plan:**
+> [`remote-build-protocol-redesign.validation.md`](./remote-build-protocol-redesign.validation.md)
+> turns each item below into concrete deliverables, precise test specs (IDs +
+> assertions), sequencing, and per-freeze readiness checklists (F-INT / F-WIRE /
+> F-SERVE30). The summaries below remain as the index into that plan.
+
 * **2.1 — CA `resolving`→promote path is unproven (Blocker 1).** The key/auth
   *rule* is frozen, but the decisions record calls the CA `resolving`→promote +
   re-authorize-on-promotion check "the one remaining unproven mechanism"

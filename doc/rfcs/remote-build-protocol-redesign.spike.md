@@ -608,6 +608,11 @@ start time, current phase/last activity, subscriber count, bytes of log so far.
 
 ## 4. Prototype scope and success criteria
 
+> The prototype below is **Workstream A** of the consolidated
+> [validation plan](./remote-build-protocol-redesign.validation.md), which folds
+> in the O1–O5 acceptance criteria and sequences this against the trust tests
+> (Workstream B), the cancel matrix (Workstream C), and serve 3.0 (Workstream D).
+
 ### 4.1 The smallest end-to-end demonstration
 
 The prototype proves **start-or-attach + live log fan-out + replay** on the

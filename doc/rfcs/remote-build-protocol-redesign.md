@@ -1087,6 +1087,11 @@ the log fixes.
 
 ## 9. Testing strategy
 
+> The dedup/attach and serve-3.0 tests below are specified concretely (test
+> IDs, scenarios, assertions) and sequenced against the prototype work in the
+> [validation plan](./remote-build-protocol-redesign.validation.md) (Workstreams
+> A–D and the F-INT/F-WIRE/F-SERVE30 freeze checklists).
+
 * **Functional tests** (`tests/functional/`): extend the existing
   `build-remote*.sh` / `build-hook*.sh` tests with assertions that
   (a) live builder output appears on the client with `-L`, (b) `nix log`

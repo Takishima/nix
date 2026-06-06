@@ -6,6 +6,7 @@
 | **Parent**       | [`remote-build-protocol-redesign.md`](./remote-build-protocol-redesign.md) |
 | **Spike**        | [`remote-build-protocol-redesign.spike.md`](./remote-build-protocol-redesign.spike.md) |
 | **Reviews**      | [`*.review.md`](./remote-build-protocol-redesign.review.md), [`*.spike.review.md`](./remote-build-protocol-redesign.spike.review.md) |
+| **Validation**   | [`*.validation.md`](./remote-build-protocol-redesign.validation.md) — the executable plan for these decisions' owed prototypes/tests (the "Follow-up" sections below are indexed there) |
 | **Resolves**     | RFC Q2 (cancel matrix), Q3 (CA resolution timing), Q4 (Hydra field set), Q7 (reuse-key vs. trust); spike §5.4.1–.2, §6 Q2/Q3 |
 | **Working group**| libstore/protocol maintainers, a Hydra maintainer, a security reviewer |
 
