@@ -29,7 +29,14 @@ check: all
 	chmod +x slow-builder.sh tests/*.sh
 	tests/run-all.sh
 
+# Workstream B (CA key-merge trust validation: T1-T3), which extends A1.
+check-b: all
+	chmod +x slow-builder.sh tests/*.sh
+	tests/run-b.sh
+
+check-all: check check-b
+
 clean:
 	rm -f $(BINS)
 
-.PHONY: all check clean
+.PHONY: all check check-b check-all clean

@@ -72,6 +72,35 @@ struct SessionAuth {
     uint8_t  trusted = 0;
 };
 
+// Authorization policy (spike §3.7.2), re-derived by the coordinator from drv
+// *material* (never delegated to the child). Toy policy, but rich enough for the
+// Workstream B trust tests:
+//   * trusted callers may build anything;
+//   * a drv carrying an "allow=<uid,uid,...>" token authorizes exactly those uids
+//     (this is what lets a CA *resolved* key be authorized for one caller and not
+//     another — the T2 re-auth-on-promotion case);
+//   * otherwise an untrusted caller may build only CA-prefixed ("ca:") drvs.
+inline bool authorizeFor(const SessionAuth & a, const std::string & material)
+{
+    if (a.trusted) return true;
+    auto pos = material.find("allow=");
+    if (pos != std::string::npos) {
+        std::string list = material.substr(pos + 6);
+        if (auto sc = list.find(';'); sc != std::string::npos) list = list.substr(0, sc);
+        std::string me = std::to_string(a.uid);
+        size_t i = 0;
+        while (i < list.size()) {
+            size_t c = list.find(',', i);
+            std::string tok = list.substr(i, c == std::string::npos ? std::string::npos : c - i);
+            if (tok == me) return true;
+            if (c == std::string::npos) break;
+            i = c + 1;
+        }
+        return false;
+    }
+    return material.rfind("ca:", 0) == 0;
+}
+
 // ---- length-prefixed framing ----------------------------------------------
 
 // Append-only writer over a std::string body (no length prefix; see frame()).
@@ -136,9 +165,18 @@ enum class CRec : uint8_t {
 };
 
 // client -> relay child: the build request.
+//
+// Workstream B (CA key-merge, spike §3.8) adds the CA fields. For an
+// input-addressed build (ca==0) the build key is `drvForBuild` and the resolve
+// phase is skipped. For a CA build (ca==1) the coordinator registers a
+// short-lived `resolving` provisional entry keyed on `unresolvedDrv`, then after
+// `resolveMs` promotes/merges onto the *resolved* key (`resolvedDrv`) and
+// re-authorizes every subscriber against it. `buildKey` is the client's
+// *asserted* key, used only for spoof detection (T3): the coordinator recomputes
+// the canonical key from the drv material it received and rejects a mismatch.
 struct ClientRequest {
-    std::string buildKey;
-    std::string drvForBuild;
+    std::string buildKey;         // asserted key (T3 spoof check); honest = key material
+    std::string drvForBuild;      // what the caller is authorized to build
     uint32_t    uid = 0;          // identity the child reports as sessionAuth
     uint8_t     trusted = 0;
     uint8_t     replayWanted = 1;
@@ -147,12 +185,18 @@ struct ClientRequest {
     uint32_t    nLines = 0;
     uint32_t    sleepMs = 0;
     uint8_t     behavior = 0;     // 0 normal, 1 slow-reader, 2 disconnect-after-first
+    // --- Workstream B / CA (spike §3.8) ---
+    uint8_t     ca = 0;           // 1 = content-addressed: go through resolve+promote
+    std::string unresolvedDrv;    // provisional registry key during `resolving`
+    std::string resolvedDrv;      // resolved drv material -> canonical build key
+    uint32_t    resolveMs = 0;    // how long the resolve phase takes (test knob)
 
     std::string encode() const {
         BufWriter w;
         w.str(buildKey); w.str(drvForBuild); w.u32(uid); w.u8(trusted);
         w.u8(replayWanted); w.u8(explicitRoot); w.str(counterFile);
         w.u32(nLines); w.u32(sleepMs); w.u8(behavior);
+        w.u8(ca); w.str(unresolvedDrv); w.str(resolvedDrv); w.u32(resolveMs);
         return w.buf;
     }
     static ClientRequest decode(const std::string & body) {
@@ -160,6 +204,7 @@ struct ClientRequest {
         q.buildKey = r.str(); q.drvForBuild = r.str(); q.uid = r.u32(); q.trusted = r.u8();
         q.replayWanted = r.u8(); q.explicitRoot = r.u8(); q.counterFile = r.str();
         q.nLines = r.u32(); q.sleepMs = r.u32(); q.behavior = r.u8();
+        q.ca = r.u8(); q.unresolvedDrv = r.str(); q.resolvedDrv = r.str(); q.resolveMs = r.u32();
         return q;
     }
 };

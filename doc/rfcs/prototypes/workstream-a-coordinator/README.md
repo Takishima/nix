@@ -1,10 +1,12 @@
-# Workstream A prototype — cross-process build coordination
+# Workstream A + B prototype — cross-process build coordination & CA-merge trust
 
 > **Status:** throw-away validation prototype.
-> **Gates:** freeze **F-INT** (the Phase 3 *internal* coordinator interface).
+> **Gates:** freeze **F-INT** (the Phase 3 *internal* coordinator interface) via
+> Workstream **A**; the **F-WIRE precondition** (trust tests T1–T3) via Workstream
+> **B**, which extends the A1 prototype.
 > **Parent:** [`../../remote-build-protocol-redesign.validation.md`](../../remote-build-protocol-redesign.validation.md)
-> (Workstream A) · [`../../remote-build-protocol-redesign.spike.md`](../../remote-build-protocol-redesign.spike.md)
-> (§3 interface, §4 prototype plan)
+> (Workstreams A & B) · [`../../remote-build-protocol-redesign.spike.md`](../../remote-build-protocol-redesign.spike.md)
+> (§3 interface, §3.8 CA resolve/promote, §4 prototype plan)
 
 This is the experimental branch the validation plan and the spike call for. Its
 single job is to **validate**, with running code, the cross-process coordination
@@ -56,17 +58,24 @@ property (§5.1): the mechanism lives entirely *below* the wire.
 | `coordinator.cc` | the coordinator: registry, replay buffer, refcount, fan-out, trust, single-threaded event loop | **A1** |
 | `reldaemon.cc` | fork-per-connection daemon + relay child; lazy-spawn election; crash fallback | **A2** |
 | `slow-builder.sh` | deliberately-slow test builder; counter + progress side-effects | **A3** |
-| `client.cc` | `nix build` stand-in (normal / slow-reader / disconnect behaviors) | test driver |
-| `ctl.cc` | direct control-socket probe (sockauth + `QUERY_ACTIVE`) | test driver |
-| `tests/` | the acceptance-criteria harness | — |
+| `client.cc` | `nix build` stand-in (IA / CA, normal / slow-reader / disconnect) | test driver |
+| `ctl.cc` | direct control-socket probe (`QUERY_ACTIVE` + `--start` for T1/T3) | test driver |
+| `tests/` | the acceptance-criteria harness (A) + trust tests (B) | — |
+
+The CA resolve→promote machinery (Workstream B, spike §3.8) lives in the same
+coordinator (`promote()` / `checkPromotions()`), because the validation plan
+specifies B as an **extension of the A1 prototype**, not a separate one.
 
 ## Build & run
 
 ```sh
 make            # builds coordinator, reldaemon, client, ctl  (needs g++/clang++, C++20, Linux)
-make check      # builds + runs the full acceptance-criteria harness
-WSA_DEBUG=1 ./reldaemon /tmp/wsa &        # manual: start a daemon
-./client --state /tmp/wsa -k demo -t 1 -L # manual: build something
+make check      # Workstream A acceptance-criteria harness
+make check-b    # Workstream B trust tests (T1-T3), extends A1
+make check-all  # both
+WSA_DEBUG=1 ./reldaemon /tmp/wsa &                 # manual: start a daemon
+./client --state /tmp/wsa -k demo -t 1             # manual: input-addressed build
+./client --state /tmp/wsa --ca -U ca:u -V ca:r -M 500 -t 1   # manual: CA build
 ```
 
 Linux-only: it uses `SO_PEERCRED` (§3.7.1) and `PR_SET_PDEATHSIG` (O2).
@@ -90,6 +99,31 @@ Refcounted cancel (the core of Workstream C's matrix that this prototype owns) i
 folded into `a-cancel.sh`: **C-a** (originator drops, build continues for the
 other subscriber), **C-b** (sole client drops, no root → cancel), **C-c** (sole
 client drops but holds an explicit root → build completes), per §3.4 / §5.2.
+
+## Workstream B — CA key-merge trust validation (gates F-WIRE)
+
+The **one remaining unproven mechanism** (validation plan, Workstream B): the CA
+`resolving`→promote path (spike §3.8) and **re-authorization on promotion**. A CA
+build registers a short-lived provisional entry keyed on the *unresolved* drv;
+when resolution completes the coordinator promotes/merges it onto the *resolved*
+key and **re-authorizes every subscriber against that resolved key**, detaching
+failures with an error. `make check-b` runs the three trust tests that are the
+**literal F-WIRE precondition**:
+
+| ID | Scenario | Asserts | Test |
+|---|---|---|---|
+| **T1** | unauthorized `START_OR_ATTACH` for a resolved key that *is* in flight vs one that is *not* | byte-identical denial, no measurable timing difference (authorize runs **before** the registry lookup) → no existence oracle | `b-existence-oracle.sh` |
+| **T2** | two distinct unresolved drvs (A authorized, B not for the resolved key) resolving to the **same** key | B detached with an error at promotion; B observes **none** of A's log; one build runs | `b-merge.sh` |
+| **T3** | a child asserts a `buildKey` not matching the drv it sent | rejected; the coordinator recomputes the key from the drv material it received | `b-spoof.sh` |
+
+`b-resolve.sh` first proves the happy path: a second client racing the **same
+unresolved drv** attaches to the provisional `resolving` entry and both promote
+onto one shared resolved build (dedup through the resolve race).
+
+The decisions this validates: `resolving` pre-state keyed on the unresolved drv;
+promote/merge onto the resolved key; **re-authorize-on-promotion** (decisions B1
+§5); the coordinator-recomputes-the-key rule (never trust the asserted key);
+and the no-existence-oracle property (authorize-before-registry).
 
 ## Which decisions this bakes in (and validates)
 
@@ -128,12 +162,19 @@ What is **modelled / simplified**, on purpose:
 - The builder is a shell script with a counter file; "exactly one build ran" is
   read from that counter rather than from store validity.
 
-**Out of scope** (spike §4.3), intentionally absent: CA `resolving` pre-state
-(Workstream B; this targets the input-addressed path), session re-attach after a
+- **CA resolution itself is modelled as a timer** (`resolveMs`), not a real
+  derivation resolution: the test supplies the unresolved drv, the resolved drv
+  material, and how long resolution "takes". What is under test is the
+  coordinator's *resolving→promote→re-auth→merge* state machine (spike §3.8), not
+  the resolver. The resolved-key allowlist (`allow=<uid,…>`) stands in for "who
+  may build the resolved output".
+
+**Out of scope** (spike §4.3), intentionally absent: session re-attach after a
 fully dropped connection (Phase 6), full crash/restart re-adoption (only the
 degrade-to-PathLocks claim is demonstrated), `QueryActiveBuilds` UX, any
 serve-protocol bridge, and **wire freezing** (this *informs* Phase 3, it does not
-freeze it).
+freeze it). CA `resolving`/promotion, previously out of scope for the A-only
+prototype, is now implemented and tested under **Workstream B**.
 
 ## Tunables (environment)
 

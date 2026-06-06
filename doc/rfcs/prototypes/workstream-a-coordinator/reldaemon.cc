@@ -170,6 +170,7 @@ void handleConnection(int clientFd)
         BufWriter w; w.u8(uint8_t(Op::StartOrAttach));
         w.str(q.buildKey); w.str(q.drvForBuild); w.u32(q.uid); w.u8(q.trusted);
         w.u8(q.replayWanted); w.u8(q.explicitRoot); w.str(q.counterFile); w.u32(q.nLines); w.u32(q.sleepMs);
+        w.u8(q.ca); w.str(q.unresolvedDrv); w.str(q.resolvedDrv); w.u32(q.resolveMs);
         writeAllBlocking(coord, frame(w.buf));
     }
     auto replyBody = readFrameBlocking(coord);

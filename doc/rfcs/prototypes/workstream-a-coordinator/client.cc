@@ -55,10 +55,16 @@ int main(int argc, char ** argv)
         {"root", required_argument, 0, 'R'},
         {"behavior", required_argument, 0, 'b'},
         {"state", required_argument, 0, 'S'},
+        {"ca", no_argument, 0, 'A'},
+        {"unresolved", required_argument, 0, 'U'},
+        {"resolved", required_argument, 0, 'V'},
+        {"resolve-ms", required_argument, 0, 'M'},
+        {"assert-key", required_argument, 0, 'K'},
         {0, 0, 0, 0}
     };
     int ch;
-    while ((ch = getopt_long(argc, argv, "k:d:c:n:s:u:t:r:R:b:S:", opts, nullptr)) != -1) {
+    bool assertGiven = false;
+    while ((ch = getopt_long(argc, argv, "k:d:c:n:s:u:t:r:R:b:S:AU:V:M:K:", opts, nullptr)) != -1) {
         switch (ch) {
         case 'k': q.buildKey = optarg; break;
         case 'd': q.drvForBuild = optarg; break;
@@ -71,11 +77,24 @@ int main(int argc, char ** argv)
         case 'R': q.explicitRoot = std::stoul(optarg); break;
         case 'b': q.behavior = std::stoul(optarg); break;
         case 'S': stateDir = optarg; break;
+        case 'A': q.ca = 1; break;
+        case 'U': q.unresolvedDrv = optarg; break;
+        case 'V': q.resolvedDrv = optarg; break;
+        case 'M': q.resolveMs = std::stoul(optarg); break;
+        case 'K': q.buildKey = optarg; assertGiven = true; break;  // T3 spoof override
         default: return 2;
         }
     }
-    if (q.drvForBuild.empty()) q.drvForBuild = q.buildKey;
-    if (q.counterFile.empty()) q.counterFile = stateDir + "/counter-" + q.buildKey;
+    if (q.ca) {
+        // CA: authorized against the unresolved drv; the honest asserted key is
+        // the resolved drv (the coordinator recomputes and checks it, T3).
+        if (q.drvForBuild.empty()) q.drvForBuild = q.unresolvedDrv;
+        if (!assertGiven) q.buildKey = q.resolvedDrv;
+        if (q.counterFile.empty()) q.counterFile = stateDir + "/counter-" + q.resolvedDrv;
+    } else {
+        if (q.drvForBuild.empty()) q.drvForBuild = q.buildKey;
+        if (q.counterFile.empty()) q.counterFile = stateDir + "/counter-" + q.buildKey;
+    }
     if (!q.uid) q.uid = ::getuid();
 
     int fd = connectSocket(stateDir + "/daemon.socket");

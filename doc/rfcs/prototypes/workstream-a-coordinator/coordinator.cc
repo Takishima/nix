@@ -37,6 +37,7 @@
 #include <vector>
 
 #include <poll.h>
+#include <time.h>
 #include <sys/prctl.h>
 #include <sys/signalfd.h>
 #include <sys/stat.h>
@@ -66,6 +67,12 @@ const size_t TAIL_CAP = envSize("WSA_TAIL_CAP", 3u << 20);   // O5: ~3 MiB tail
 const size_t OUT_CAP  = envSize("WSA_OUT_CAP", 256u << 10);  // §3.6 per-subscriber cap
 const int    IDLE_MS  = int(envSize("WSA_IDLE_MS", 600000)); // O3: idle-exit grace (10 min)
 
+long nowMs()
+{
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return long(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
+}
+
 std::string sanitize(const std::string & key)
 {
     std::string out;
@@ -85,6 +92,14 @@ struct Build
     int exitStatus = 0;
     bool cancelled = false;
     bool explicitRoot = false;  // §5.2: keeps the build alive at refcount 0 (C-c)
+
+    // Workstream B / CA resolve+promote (spike §3.8).
+    AState state = AState::Building;  // IA builds start Building; CA start Resolving
+    std::string resolvedDrv;    // canonical resolved-key material (re-auth target)
+    std::string authMaterial;   // drv material QUERY_ACTIVE filters against
+    long resolveDeadlineMs = 0; // when the resolve phase promotes (steady ms)
+    // builder params, captured so a CA build can start at *promotion*, not attach:
+    std::string counterFile; uint32_t nLines = 0; uint32_t sleepMs = 0;
 
     int refcount = 0;
     std::vector<int> subscribers;     // live subscriber connection fds
@@ -179,10 +194,20 @@ public:
             for (auto & [k, b] : registry)
                 if (b->builderReadFd >= 0) pfds.push_back({b->builderReadFd, POLLIN, 0});
 
-            int timeout = (conns.empty() && registry.empty()) ? IDLE_MS : -1;
+            // Wake in time for the soonest CA resolve→promote deadline (§3.8).
+            long soonest = -1;
+            for (auto & [k, b] : registry)
+                if (b->state == AState::Resolving)
+                    soonest = (soonest < 0) ? b->resolveDeadlineMs : std::min(soonest, b->resolveDeadlineMs);
+            int timeout;
+            if (soonest >= 0) timeout = std::max(0, int(soonest - nowMs()));
+            else timeout = (conns.empty() && registry.empty()) ? IDLE_MS : -1;
+
             int n = ::poll(pfds.data(), pfds.size(), timeout);
             if (n < 0) { if (errno == EINTR) continue; throw std::runtime_error("poll"); }
-            if (n == 0) { dbg("idle-exit"); break; }   // O3 idle exit
+            checkPromotions();
+            if (n == 0 && soonest < 0) { dbg("idle-exit"); break; }   // O3 idle exit
+            if (n == 0) continue;
 
             for (auto & p : pfds) {
                 if (!p.revents) continue;
@@ -270,57 +295,85 @@ private:
         }
     }
 
-    // §3.7.2 authorization, re-derived by the coordinator (not delegated). For
-    // the prototype: trusted callers may build anything; untrusted callers may
-    // only build CA-style derivations (key prefix "ca:") they could build
-    // themselves -- so an untrusted client cannot attach to an in-flight
-    // input-addressed build it could not have requested (the A-trust property).
-    static bool authorize(const SessionAuth & a, const std::string & drvForBuild)
+    void denyStart(Conn & c)
     {
-        if (a.trusted) return true;
-        return drvForBuild.rfind("ca:", 0) == 0;
+        // A denial is byte-identical whether or not the build exists, and is
+        // produced before any registry lookup -> no existence/timing oracle (T1).
+        BufWriter w; w.u8(uint8_t(Msg::StartReply)); w.u8(uint8_t(Status::Denied)); w.u64(0); w.u8(0);
+        enqueue(c, frame(w.buf));
     }
 
     void onStartOrAttach(Conn & c, BufReader & r)
     {
-        BuilderSpec spec;
-        spec.buildKey    = r.str();
-        spec.drvForBuild = r.str();
+        std::string assertedKey = r.str();
+        std::string drvForBuild = r.str();
         SessionAuth auth{ r.u32(), r.u8() };
         bool replayWanted = r.u8() != 0;
         bool explicitRoot = r.u8() != 0;
-        spec.counterFile = r.str();
-        spec.nLines      = r.u32();
-        spec.sleepMs     = r.u32();
+        std::string counterFile = r.str();
+        uint32_t nLines = r.u32();
+        uint32_t sleepMs = r.u32();
+        bool ca = r.u8() != 0;
+        std::string unresolvedDrv = r.str();
+        std::string resolvedDrv = r.str();
+        uint32_t resolveMs = r.u32();
 
-        // authorize() BEFORE touching the registry (§3.3, §3.7). A denial is
-        // byte-identical whether or not the build exists -> no existence oracle.
-        if (!authorize(auth, spec.drvForBuild)) {
-            dbg("DENIED start/attach uid " + std::to_string(auth.uid) + " key " + spec.buildKey);
-            BufWriter w; w.u8(uint8_t(Msg::StartReply)); w.u8(uint8_t(Status::Denied)); w.u64(0); w.u8(0);
-            enqueue(c, frame(w.buf));
+        // The drv material the caller is authorized against *at attach time*:
+        // the unresolved drv for CA (the resolved key is not known yet), the drv
+        // itself for IA.
+        std::string attachMaterial = ca ? unresolvedDrv : drvForBuild;
+
+        // authorize BEFORE touching the registry (§3.3, §3.7 / T1).
+        if (!authorizeFor(auth, attachMaterial)) {
+            dbg("DENIED start/attach uid " + std::to_string(auth.uid) + " (no auth for " + attachMaterial + ")");
+            denyStart(c);
             return;
         }
 
-        c.auth = auth; c.replayWanted = replayWanted; c.buildKey = spec.buildKey;
-        c.subId = nextSubId++;
+        // T3: the coordinator recomputes the canonical key from the drv material
+        // it received and rejects a child that asserts a different key. (For IA
+        // the canonical key is the drv; for CA it is the resolved drv.)
+        std::string canonicalKey = ca ? resolvedDrv : drvForBuild;
+        if (!assertedKey.empty() && assertedKey != canonicalKey) {
+            dbg("REJECT asserted key mismatch: child said '" + assertedKey + "' but drv resolves to '" + canonicalKey + "'");
+            denyStart(c);
+            return;
+        }
+
+        c.auth = auth; c.replayWanted = replayWanted; c.subId = nextSubId++;
+
+        // Registry key: a CA build lives under a provisional "unresolved:" key
+        // during the resolve phase (spike §3.8); IA goes straight to its key.
+        std::string regKey = ca ? ("unresolved:" + unresolvedDrv) : drvForBuild;
+        c.buildKey = regKey;
 
         Build * b;
-        auto it = registry.find(spec.buildKey);
-        if (it == registry.end()) {                         // MISS -> start a build
+        auto it = registry.find(regKey);
+        if (it == registry.end()) {                         // MISS
             auto nb = std::make_unique<Build>();
-            nb->key = spec.buildKey;
+            nb->key = regKey;
             nb->explicitRoot = explicitRoot;
-            startBuilder(*nb, spec);
-            c.deduplicated = false;
+            nb->counterFile = counterFile; nb->nLines = nLines; nb->sleepMs = sleepMs;
+            nb->resolvedDrv = resolvedDrv;
+            nb->authMaterial = ca ? resolvedDrv : drvForBuild;
             b = nb.get();
-            registry[spec.buildKey] = std::move(nb);
-            dbg("MISS  key " + spec.buildKey + " -> started build pid " + std::to_string(b->builderPid));
+            if (ca) {                                       // start a `resolving` pre-state
+                b->state = AState::Resolving;
+                b->resolveDeadlineMs = nowMs() + long(resolveMs);
+                registry[regKey] = std::move(nb);
+                dbg("MISS  CA " + unresolvedDrv + " -> resolving (promote in " + std::to_string(resolveMs) + "ms)");
+                onBuildOutput(*b, "[resolving CA derivation " + unresolvedDrv + "]\n");
+            } else {                                        // IA: build immediately
+                startBuilder(*nb);
+                registry[regKey] = std::move(nb);
+                dbg("MISS  IA " + regKey + " -> started build pid " + std::to_string(b->builderPid));
+            }
+            c.deduplicated = false;
         } else {                                            // HIT -> attach
             b = it->second.get();
             if (explicitRoot) b->explicitRoot = true;
             c.deduplicated = true;
-            dbg("HIT   key " + spec.buildKey + " -> attaching (refcount was " + std::to_string(b->refcount) + ")");
+            dbg("HIT   " + regKey + " -> attaching (refcount was " + std::to_string(b->refcount) + ")");
         }
         b->refcount += 1;                                   // §3.3
         c.started = true;
@@ -330,7 +383,8 @@ private:
         enqueue(c, frame(w.buf));
     }
 
-    void startBuilder(Build & b, const BuilderSpec & spec)
+    // Fork the builder for an already-keyed Build (IA: at miss; CA: at promotion).
+    void startBuilder(Build & b)
     {
         b.logRef = stateDir + "/log/" + sanitize(b.key) + ".log";
         b.logFd = ::open(b.logRef.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0640);
@@ -347,13 +401,12 @@ private:
             // O2 / A-crash: die with the coordinator so a coordinator crash
             // never leaves an orphan builder holding output locks.
             ::prctl(PR_SET_PDEATHSIG, SIGKILL);
-            std::string self = selfDir();
-            std::string script = self + "/slow-builder.sh";
+            std::string script = selfDir() + "/slow-builder.sh";
             execlp("/bin/sh", "sh", script.c_str(),
-                   spec.counterFile.c_str(),
-                   spec.buildKey.c_str(),
-                   std::to_string(spec.nLines).c_str(),
-                   std::to_string(spec.sleepMs).c_str(),
+                   b.counterFile.c_str(),
+                   b.key.c_str(),
+                   std::to_string(b.nLines).c_str(),
+                   std::to_string(b.sleepMs).c_str(),
                    (char *) nullptr);
             std::fprintf(stderr, "exec builder failed: %s\n", strerror(errno));
             _exit(127);
@@ -362,6 +415,7 @@ private:
         setNonBlocking(pipefd[0]);
         b.builderPid = pid;
         b.builderReadFd = pipefd[0];
+        b.state = AState::Building;
     }
 
     void onSubscribe(Conn & c, uint64_t subId)
@@ -379,7 +433,7 @@ private:
                 sendFrame(c, "\n...[" + std::to_string(b.truncated) + " frames truncated]...\n", true);
             for (auto & chunk : b.tail) sendFrame(c, chunk, true);
         }
-        sendAttachState(c, AState::Building);
+        sendAttachState(c, b.state);
         b.subscribers.push_back(c.fd);
         c.subscribed = true;
         dbg("subscribed fd " + std::to_string(c.fd) + " to " + c.buildKey
@@ -411,13 +465,106 @@ private:
     // (--keep-going / timeouts are the deferred Q2 matrix.)
     static bool hasRootReasonToContinue(const Build & b) { return b.explicitRoot; }
 
+    // ---- Workstream B: CA resolve -> promote/merge + re-auth (spike §3.8) ---
+
+    void checkPromotions()
+    {
+        long t = nowMs();
+        std::vector<std::string> due;
+        for (auto & [k, b] : registry)
+            if (b->state == AState::Resolving && t >= b->resolveDeadlineMs) due.push_back(k);
+        for (auto & k : due) promote(k);
+    }
+
+    // The resolve phase completed: re-authorize every subscriber against the
+    // *resolved* key (decisions B1 §5 / T2), detaching failures with an error,
+    // then promote — merging onto an existing real Build under the same resolved
+    // key if one exists (CA-coalescing), else re-keying this entry and starting
+    // the builder. Detached subscribers never see the build's log (T2).
+    void promote(const std::string & provKey)
+    {
+        auto it = registry.find(provKey);
+        if (it == registry.end()) return;
+        Build & prov = *it->second;
+        std::string resolvedKey = prov.resolvedDrv;
+        dbg("PROMOTE " + provKey + " -> resolved key " + resolvedKey);
+
+        // Re-authorize each subscriber against the resolved drv (§3.8 / T2).
+        std::vector<int> survivors;
+        for (int fd : prov.subscribers) {
+            auto ci = conns.find(fd);
+            if (ci == conns.end()) continue;
+            Conn & sc = *ci->second;
+            if (authorizeFor(sc.auth, prov.resolvedDrv)) {
+                survivors.push_back(fd);
+            } else {
+                dbg("RE-AUTH FAILED at promotion for fd " + std::to_string(fd)
+                    + " uid " + std::to_string(sc.auth.uid) + " -> detaching with error");
+                // The subscriber observes only an error -- never A's build log.
+                onBuildOutputTo(sc, "[re-authorization failed at CA promotion: not authorized for the resolved key]\n");
+                BufWriter w; w.u8(uint8_t(Msg::BuildResult));
+                w.u8(0); w.u32(13 /*EACCES-ish*/); w.u8(sc.deduplicated ? 1 : 0); w.str("");
+                enqueue(sc, frame(w.buf));
+                sc.subscribed = false; sc.started = false;
+            }
+        }
+
+        auto existing = registry.find(resolvedKey);
+        if (existing != registry.end() && existing->second->state == AState::Building) {
+            // MERGE onto the already-running resolved build (CA-coalescing, §3.8).
+            Build & real = *existing->second;
+            for (int fd : survivors) {
+                auto ci = conns.find(fd);
+                if (ci == conns.end()) continue;
+                Conn & sc = *ci->second;
+                sc.buildKey = resolvedKey; sc.deduplicated = true;
+                if (sc.replayWanted) {                      // catch the joiner up
+                    for (auto & ch : real.head) sendFrame(sc, ch, true);
+                    for (auto & ch : real.tail) sendFrame(sc, ch, true);
+                }
+                sendAttachState(sc, AState::Building);
+                real.subscribers.push_back(fd);
+                real.refcount += 1;
+            }
+            registry.erase(provKey);                        // drop the provisional entry
+            dbg("merged " + std::to_string(survivors.size()) + " subscriber(s) into running " + resolvedKey);
+        } else {
+            // Re-key the provisional entry to the resolved key and start the build.
+            auto node = std::move(it->second);
+            registry.erase(provKey);
+            node->key = resolvedKey;
+            node->subscribers = survivors;
+            node->refcount = int(survivors.size());
+            for (int fd : survivors) {
+                auto ci = conns.find(fd);
+                if (ci != conns.end()) { ci->second->buildKey = resolvedKey; sendAttachState(*ci->second, AState::Building); }
+            }
+            Build * b = node.get();
+            registry[resolvedKey] = std::move(node);
+            if (b->refcount > 0) {
+                startBuilder(*b);
+                dbg("promoted to build " + resolvedKey + " pid " + std::to_string(b->builderPid));
+            } else {
+                // everyone was de-authorized; nothing to build
+                registry.erase(resolvedKey);
+                dbg("promotion left no authorized subscribers; dropped " + resolvedKey);
+            }
+        }
+    }
+
+    // Send a single synthetic log line to exactly one subscriber (used to deliver
+    // the re-auth error without touching the shared build's fan-out).
+    void onBuildOutputTo(Conn & c, const std::string & text) { sendFrame(c, text, false); }
+
     void onQueryActive(Conn & c, BufReader & r)
     {
         SessionAuth auth{ r.u32(), r.u8() };
-        // §3.7.3: filter to builds this caller is itself authorized to see.
+        // §3.7.3: filter to builds this caller is itself authorized to see;
+        // provisional `resolving` entries are not advertised (no unresolved-drv leak).
         std::vector<Build *> visible;
         for (auto & [k, b] : registry)
-            if (!b->reaped && authorize(auth, b->key)) visible.push_back(b.get());
+            if (!b->reaped && b->state == AState::Building && authorizeFor(auth, b->authMaterial))
+                visible.push_back(b.get());
 
         BufWriter w; w.u8(uint8_t(Msg::ActiveList)); w.u32(uint32_t(visible.size()));
         for (Build * b : visible) {
