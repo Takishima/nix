@@ -44,7 +44,7 @@ recurring operational complaints motivate this redesign:
    succeed just as in the non-split case. The remaining gap in this
    configuration is the *same* one as everywhere else — you still cannot
    get the build logs. (There is one narrow sharp edge: the `ssh://` build
-   store rejects `--eval-store` outright at `legacy-ssh-store.cc:221`. But
+   store rejects `--eval-store` outright at `legacy-ssh-store.cc:222`. But
    where that is avoided — e.g. with `ssh-ng://` — the split is not the
    problem; logs are.) In other words, this is not really a fourth
    problem: it is problems 1–2 again, and the design must simply not treat
@@ -121,10 +121,12 @@ client throws using only `BuildResult::Failure::message()`
 (`src/libstore/include/nix/store/build-result.hh`) carries status,
 message, `builtOutputs`, and timing — but **no log handle**.
 
-The distributed-build hook (`build-remote.cc`) is a `LegacySSHStore`
-client. Its own JSON logger on fd 4 reports activities like "copying
-dependencies", but the remote *build* output is never put on that fd
-because `buildDerivation()` only returns a `BuildResult`.
+The distributed-build hook
+(`src/nix/build-remote/build-remote.cc` — note it lives under `src/nix`,
+not `src/libstore`; later bare `build-remote.cc` references mean this file)
+is a `LegacySSHStore` client. Its own JSON logger on fd 4 reports activities
+like "copying dependencies", but the remote *build* output is never put on
+that fd because `buildDerivation()` only returns a `BuildResult`.
 
 ### 2.2 The worker protocol (`ssh-ng://`, daemon) — already streams logs
 
@@ -144,19 +146,34 @@ distributed-build hook uses is the one without it.
 
 ### 2.3 Deduplication today
 
-Within a single process, the `Worker` deduplicates goals via
+Within a *single process*, the `Worker` deduplicates goals via
 `initGoalIfNeeded` over weak-pointer maps keyed by `drvPath`+output
-(`src/libstore/build/worker.cc:58-104`,
-`worker.hh:116-127`). This is **per-process only**. When two independent
-clients reach the same builder:
+(`src/libstore/build/worker.cc:58-104`, `worker.hh:116-127`). This matters
+for one client that asks for the same drv twice in one invocation, but it
+**does not extend across connections**, because the daemon is
+**fork-per-connection**:
 
-* If the builder runs `nix-store --serve` directly, two ssh sessions →
-  two processes → potentially two concurrent builds.
-* If the builder's `--serve` process forwards to a shared `nix-daemon`,
-  the daemon's `Worker` *does* share one goal — but the second client's
-  connection sees no progress (server `verbosity=lvlError`), and there is
-  no protocol concept of "attach", "replay the log so far", or "here is
-  the build you joined".
+* `daemonLoop` forks a separate child process for every accepted connection
+  (`src/nix/unix/daemon.cc`, `startProcess(...)`, "Fork a child to handle
+  the connection"); each child calls `storeConfig->openStore()` and runs
+  its own `processConnection` with its **own `Worker` in its own address
+  space**. There is no `Worker`, goal map, or buffer shared between two
+  connections.
+* What actually coalesces two concurrent builds of the same derivation is
+  **filesystem `PathLocks` on the output paths**, not goal-sharing: a build
+  acquires output locks in `acquireResources`
+  (`derivation-building-goal.cc:437-497`, `outputLocks.lockPaths(...)`); a
+  second process blocks on the same lock and, on waking, finds the outputs
+  already valid and skips the rebuild.
+
+The consequence is important for this RFC: cross-connection coalescing today
+serializes redundant *work* but provides **no log fan-out** — the second
+client sees nothing of the first build, and there is no protocol concept of
+"attach", "replay the log so far", or "here is the build you joined". The
+"share one build, fan out its log" mechanism this RFC wants therefore does
+**not** exist even latently in the stock daemon; building it requires
+cross-process coordination (§4.3.3), not merely exposing an existing shared
+`Worker`.
 
 ### 2.4 Eval-store / build-store separation today
 
@@ -171,7 +188,7 @@ the design must not regress it and must extend logging to cover it.
   hook is hand-rolled but correct (`build-remote.cc:307,341,355,398`).
 * The one real sharp edge is that `LegacySSHStore::buildPaths` throws
   *"building on an SSH store is incompatible with '--eval-store'"*
-  (`legacy-ssh-store.cc:221`). Outside that specific `ssh://`+`--eval-store`
+  (`legacy-ssh-store.cc:222`). Outside that specific `ssh://`+`--eval-store`
   combination, the split behaves like the non-split case — **the missing
   piece is purely the logs (§2.1), not the copying.**
 
@@ -286,7 +303,7 @@ fix Gap C so that a failed build is never silent: see **G8**.
   the eval store, and whether either or both are remote. The split is
   already functional today; the only requirement is that logging not treat
   it as a special case. (Removing the narrow `ssh://`+`--eval-store`
-  rejection at `legacy-ssh-store.cc:221` is a minor cleanup, not a
+  rejection at `legacy-ssh-store.cc:222` is a minor cleanup, not a
   headline goal.)
 * **G5 — Introspection.** The state of a builder (in-flight builds,
   queue, who is attached) is queryable for diagnostics and tooling.
@@ -332,9 +349,11 @@ Two strategic options were considered:
 the bridge.** Rationale:
 
 * The worker protocol already has the hard part (structured streaming),
-  is already spoken by `ssh-ng://`, and already carries the daemon's
-  shared `Worker` where dedup naturally lives. Building the redesign on
-  top of it avoids inventing a second streaming framing.
+  is already spoken by `ssh-ng://`, and is where the daemon's `Worker`
+  already runs builds. Building the redesign on top of it avoids inventing
+  a second streaming framing. (Note: this gives us streaming for free, but
+  **not** cross-connection dedup — the daemon is fork-per-connection, §2.3
+  — which is why §4.3/§4.3.3 are scoped separately.)
 * But Hydra and a large installed base speak the serve protocol, so we
   cannot simply delete it. We therefore *also* give the serve protocol the
   minimum it needs (a log reference + fetch) so the existing path degrades
@@ -369,10 +388,24 @@ codes. Concretely:
 * For `ssh-ng://`, remote building already streams via `processStderr`;
   the work is to make the distributed-build hook *use* `ssh-ng://` (or an
   equivalent `Store` that streams) instead of `LegacySSHStore`, and to
-  **tag** each `Activity`/log line with its originating derivation so a
-  multi-drv session is legible. This means threading a "build id" /
-  derivation path through `Activity` parent fields for build-related
-  activities.
+  **tag** each `Activity`/log line with its originating build.
+
+  **Tagging is the load-bearing detail, not a footnote.** When one session
+  drives N derivations, their activity trees interleave on the wire, and a
+  `resBuildLogLine` result only carries an `ActivityId` and the line text —
+  not "which drv". Reliable attribution requires that every build-related
+  sub-activity be rooted at a per-build top-level activity carrying the
+  resolved drv (build id), so the client can map any `ActivityId` back to a
+  build by walking `parent` links it already receives via
+  `STDERR_START_ACTIVITY` (which includes `parent`,
+  `worker-protocol`/`daemon.cc:161`). Concretely: introduce a `Build`
+  activity type whose fields include the build id; ensure
+  `actBuild`/phase/log activities created under it set `parent` to that
+  activity; and have the client maintain an `ActivityId → build id` index
+  from the start/stop frames. Without this, a multi-build session is
+  unreadable "log soup"; with it, a UI can group, filter, and label per
+  build. This index is also what lets the on-failure dump (§4.9) select
+  *the failing build's* lines out of an interleaved stream.
 
 * For the serve protocol bridge, add an optional **log frame** to the
   `BuildDerivation`/`BuildPaths` exchange: after the request and before
@@ -388,9 +421,29 @@ phases, `--log-format internal-json`, etc.).
 
 ### 4.3 Dedup and attach (G3) — the heart of the redesign
 
-Introduce a server-side **Build Registry** that lives in the builder's
-shared `Worker`/daemon, not per-connection. It maps a **build key** to a
-live **Build**.
+> **Scope, stated up front.** Unlike the rest of this RFC, this feature is
+> **not** a thin exposure of an existing capability — §2.3 establishes that
+> the stock daemon is fork-per-connection with no shared `Worker`, so there
+> is no in-process registry to "lift". This section describes the *target*
+> semantics, and is explicitly **conditional on a cross-process
+> coordination mechanism (§4.3.3)**. Two deployment classes get it on very
+> different timelines:
+>
+> * **Single-process multiplexed backends** — a nixbuild.net-style endpoint,
+>   or a single `RemoteStore` connection driving many builds — can implement
+>   the registry/broadcaster natively in their own address space and get
+>   dedup/attach/replay essentially "for free". This is where the feature
+>   lands first and most cleanly.
+> * **The stock fork-per-connection `nix-daemon`** gets cross-client
+>   dedup/fan-out **only** once §4.3.3 is built; until then it keeps today's
+>   behaviour (work coalesced by output `PathLocks`, no log fan-out). The
+>   operational wins of this RFC (Gaps A/B/C) do **not** depend on this and
+>   ship first (§8).
+
+Introduce a server-side **Build Registry** that maps a **build key** to a
+live **Build**, owned by whatever component actually schedules builds for
+the endpoint (the backend's scheduler, or the coordinator of §4.3.3 — *not*
+a per-connection `Worker`).
 
 **Build key.** The key must be correct for both input-addressed and
 content-addressed derivations. We key on the **resolved derivation** — the
@@ -412,21 +465,29 @@ ones (where the drv path already determines the resolved drv).
 3. When the `Build` finishes, deliver the same `BuildResult` (and log
    reference) to every subscribed session.
 
-This generalises the existing in-process `initGoalIfNeeded` dedup
-(`worker.cc:58`) from "one process" to "one builder, many connections,
-with fan-out".
+Within a single process this resembles `initGoalIfNeeded`
+(`worker.cc:58`) extended with subscribers; **across** processes it is a
+genuinely new mechanism (§4.3.3), not a generalisation of existing code.
 
-**Log fan-out.** Today a goal's `Activity`/log output goes to a single
-ambient `logger`. The redesign introduces a per-`Build` **log
-broadcaster**: a small sink that (a) appends to the in-memory replay
-buffer, (b) appends to the persisted log writer, and (c) forwards to the
-`Logger` of every currently-subscribed session. Sessions subscribe and
-unsubscribe without affecting the build. A session detaching (client
-disconnect) must **not** cancel the build if other sessions remain
-attached; the build is cancelled only when its subscriber count hits zero
-*and* no `keep-going`/root reason to continue exists (mirrors current
-`MonitorFdHup` semantics in `nix-store.cc:1009,1032`, but reference-counted
-across sessions).
+**Log fan-out.** A goal's `Activity`/log output goes to a single ambient
+`logger`. The redesign introduces a per-`Build` **log broadcaster**: a sink
+that (a) appends to the replay buffer, (b) appends to the persisted log
+writer, and (c) forwards to the `Logger` of every currently-subscribed
+session. In a single-process backend this is an ordinary in-memory
+fan-out; in the fork-per-connection daemon the buffer and broadcaster must
+live in the coordinator (§4.3.3), and "forward to a session's `Logger`"
+becomes "write a log frame down that session's socket". Sessions subscribe
+and unsubscribe without affecting the build.
+
+**Cancellation is reference-counted — and that is the hard part across
+processes.** A session detaching (client disconnect) must **not** cancel
+the build if other sessions remain attached; the build is cancelled only
+when its subscriber count hits zero *and* no `keep-going`/root reason to
+continue exists. Today a client disconnect trips `MonitorFdHup`
+(`nix-store.cc:1009,1032`) and the handling child simply exits — there is
+no shared refcount, so this semantics is **not** achievable in the stock
+daemon without the coordinator (§4.3.3). In a single-process backend it is
+a straightforward counter.
 
 #### 4.3.1 Late joiners and replay
 
@@ -439,6 +500,14 @@ session to the live stream. After the build completes, the persisted log
 (§4.4) is the source of truth for any further joiners (they get the whole
 thing via the log-fetch path, §4.5).
 
+The buffer's *location* is determined by §4.3.3: in a single-process
+backend it is plain process memory; in the fork-per-connection daemon it
+must be owned by the coordinator (a shared ring buffer or the coordinator's
+own memory), because the forked child handling the first build cannot
+expose its memory to the child handling a late joiner. This is why Q1
+(replay policy) and the coordination mechanism cannot be decided
+independently.
+
 #### 4.3.2 Introspection of the registry (G5)
 
 Add a read-only query, `QueryActiveBuilds`, returning for each in-flight
@@ -446,7 +515,43 @@ Add a read-only query, `QueryActiveBuilds`, returning for each in-flight
 phase/last activity, number of attached sessions, and bytes of log so
 far. This makes "what is my builder doing and who asked for it"
 answerable by `nix` tooling and by Hydra, and is the basis for a future
-`nix store build-status <builder>` command.
+`nix store build-status <builder>` command. Note that in the
+fork-per-connection daemon this query *also* requires the coordinator
+(§4.3.3): a single connection's child has no view of builds running in
+sibling children.
+
+#### 4.3.3 Cross-process build coordination (the prerequisite)
+
+For the stock `nix-daemon`, everything above presupposes a component that
+outlives and is shared across the per-connection children. There are three
+candidate mechanisms, in rough order of increasing scope:
+
+1. **A coordinator process (recommended starting point).** A long-lived
+   per-store coordinator (a new role of `nix-daemon`, or a sidecar) owns the
+   Build Registry, the replay buffers, and the subscriber refcounts. The
+   forked connection children become thin: on a build request a child asks
+   the coordinator to *start-or-attach* a build keyed on the resolved drv,
+   then relays the coordinator's log frames down its own socket and
+   forwards cancellation/disconnect. The coordinator runs the actual
+   `Worker`. This keeps the wire protocol changes (Build Sessions, §4.1)
+   the same for both backend classes and confines the new complexity to one
+   process. It is also the natural home for `QueryActiveBuilds`.
+2. **Shared memory + a published log ring buffer**, keyed on the resolved
+   drv, with the building child as writer and attaching children as
+   readers, plus a small shared registry/refcount table. Avoids a new
+   daemon but pushes lifecycle, cleanup-on-crash, and backpressure into
+   shared-memory bookkeeping that is easy to get wrong.
+3. **Re-architect the daemon to single-process multiplexed**, abandoning
+   fork-per-connection. This makes the in-process design of §4.3 literally
+   true but is the largest change and has its own isolation/robustness
+   trade-offs (one crashing build can no longer be contained to a child).
+
+This RFC does **not** pick one here; it flags the choice as a **design
+spike** that must precede freezing any Phase 3 wire surface (§8, §10),
+because the mechanism bounds what session re-attach (§4.7.4) and
+`QueryActiveBuilds` can promise. Single-process backends (nixbuild.net,
+single-`RemoteStore` drivers) need none of this and can proceed in
+parallel.
 
 ### 4.4 Extended `BuildResult` and durable diagnostics (G2)
 
@@ -494,7 +599,7 @@ log.
 `LogStore` already provides `getBuildLog`/`getBuildLogExact` server-side
 (`log-store.cc`, `local-fs-store.cc:160`); this work is purely exposing it
 over the two wires and wiring `nix log`'s store resolution
-(`get-build-log.cc:7-29`) to consult the build store.
+(`libcmd/get-build-log.cc:7-29`) to consult the build store.
 
 To also close **Gap B**, `buildWithHook` must re-emit a sub-build's log
 lines to the *ambient* logger (not only to the local `LogFile`) so they
@@ -516,7 +621,7 @@ The store split already works functionally, so this section is about
   separate eval store should get the same live + fetchable logs as anyone
   else.
 * Minor cleanup (not required for logs): remove the hard error in
-  `legacy-ssh-store.cc:221` so `ssh://`+`--eval-store` no longer aborts,
+  `legacy-ssh-store.cc:222` so `ssh://`+`--eval-store` no longer aborts,
   reusing the **explicit closure-copy** the hook already performs by hand
   (`build-remote.cc:307,355`). While there, surface those copies as
   observable activities ("copying derivation closure eval→build", "copying
@@ -565,7 +670,13 @@ This validates the RFC's direction and sharpens four requirements:
    users to `--store ssh-ng://`. The redesign should: (a) let a builder
    **advertise** that it self-schedules / has elastic capacity, so the hook
    does not gate on a local slot count; and (b) treat `maxJobs` for such a
-   builder as a client-side concurrency *hint*, not a hard pool size.
+   builder as a client-side concurrency *hint*. **This must be strictly
+   opt-in.** Operators rely on `maxJobs` in existing `/etc/nix/machines`
+   files as a hard cap (to protect fixed-size machines); changing its
+   meaning by default would silently overcommit those builders. The "elastic
+   capacity" behaviour is therefore enabled only when a builder explicitly
+   advertises it (or an operator sets a new per-machine flag), and the
+   default semantics of `maxJobs` are unchanged.
 
 2. **Many concurrent builds (and log streams) per endpoint.** Today the
    serve protocol is one synchronous build per connection, so N parallel
@@ -591,8 +702,15 @@ This validates the RFC's direction and sharpens four requirements:
    connection may drop while a long build continues server-side. Build
    Sessions with **stable ids** (§4.1) let a client **re-attach** to an
    in-flight build and resume following its log (replay + live, §4.3.1),
-   instead of losing visibility or re-queuing work. The server-side Build
-   Registry (§4.3) is what makes the build outlive any one connection.
+   instead of losing visibility or re-queuing work. **This depends entirely
+   on §4.3.3:** a build outliving its connection is *impossible* in the
+   stock fork-per-connection daemon, where a client disconnect trips
+   `MonitorFdHup` (`nix-store.cc:1009`) and the handling child exits and
+   tears the build down. Re-attach therefore works natively only on
+   single-process backends (which already keep the build alive), and on the
+   stock daemon only once a coordinator (§4.3.3) owns the build. The RFC
+   should not promise re-attach for the stock daemon before that spike
+   lands.
 
 None of this requires Nix to *become* a scheduler (that stays a non-goal,
 and Hydra's job): it requires the protocol to (a) not impose client-side
@@ -730,10 +848,22 @@ The redesign preserves the existing rules:
   (`serve-protocol.cc:17-110`). No existing field changes meaning.
 * Old builders remain fully usable at reduced fidelity; old clients are
   unaffected. There is no flag day.
+* **Do not freeze the serve 3.0 wire until the Hydra field set is agreed
+  (Q4).** Once a 3.0 serialisation ships and is in the wild, its layout is a
+  back-compat promise. Phases 1/2 may *prototype* the extended `BuildResult`
+  and log frames behind an unstable/experimental version, but the byte
+  layout must not be declared stable as 3.0 until the Hydra coordination
+  (§4.8) lands — otherwise a later Hydra-driven field change would break the
+  very compatibility this section promises.
 
 ## 8. Phased implementation plan
 
-Each phase is independently shippable and testable.
+Each phase is independently shippable and testable. **Crucially, Phases
+0–2 and 4 deliver Gaps A/B/C — the bulk of the operator pain — without any
+shared registry or daemon redesign.** They are the "even if dedup never
+lands" core. The dedup/attach work (the spike + Phase 3) is a separate
+sub-project gated on the §4.3.3 process-model decision and must not block
+the log fixes.
 
 * **Phase 0 — `nix log` over `ssh-ng` + persist remote logs (smallest
   win, biggest relief).** Two parts, both pure log-retrieval:
@@ -745,7 +875,7 @@ Each phase is independently shippable and testable.
   - On the serve path, stop discarding the log (make `keepLog`/`verbosity`
     suppression conditional at `nix-store.cc:908-909`, persist via
     `addBuildLog`) and add the serve `QueryBuildLog` command; wire
-    `nix log`'s store resolution (`get-build-log.cc:7-29`) to consult the
+    `nix log`'s store resolution (`libcmd/get-build-log.cc:7-29`) to consult the
     build store.
   Delivers **G2/Gap A** with no streaming work.
   *Touches:* `ssh-store.cc`, `remote-store.{cc,hh}`, `worker-protocol*`,
@@ -772,15 +902,33 @@ Each phase is independently shippable and testable.
   In the same phase, fix **Gap B**: have `buildWithHook` re-emit a
   sub-build's parsed log lines to the ambient logger
   (`derivation-building-goal.cc:737-762`) so nested builds surface upstream.
+  *Caveat:* avoid double-logging — when the same daemon both drives the hook
+  and is itself the ambient (tunnel) logger, a re-emitted line must not also
+  reach the client via a second path. Tag re-emitted lines or emit them only
+  through the build's activity so each line appears once.
   *Touches:* `serve-protocol*.{hh,cc}`, `nix-store.cc`,
   `legacy-ssh-store.cc`, `build/derivation-building-goal.cc`.
 
+* **Spike — Cross-process build coordination (§4.3.3), gates Phase 3.**
+  *Not code-complete; a design decision with a prototype.* Choose among
+  coordinator-process / shared-memory / single-process-daemon, because the
+  choice bounds what `QueryActiveBuilds` and session re-attach can promise
+  and what the Phase 3 wire surface must look like. Prototype start-or-attach
+  + log fan-out for the chosen mechanism on the stock daemon. **No Phase 3
+  wire surface is frozen until this lands.** Single-process backends
+  (nixbuild.net, single-`RemoteStore` drivers) do not need this and can
+  implement §4.3 in parallel.
+
 * **Phase 3 — Build Registry + attach/replay + fan-out.** Implement the
-  server-side registry keyed on resolved drv, the per-Build log
-  broadcaster, replay buffer, reference-counted cancellation, and
-  `deduplicated` reporting. Delivers **G3**.
-  *Touches:* `build/worker.{cc,hh}`, `build/derivation-building-goal.cc`,
-  new `build/build-registry.{cc,hh}`, daemon/serve handlers.
+  registry keyed on the resolved drv, the per-Build log broadcaster, replay
+  buffer, reference-counted cancellation, and `deduplicated` reporting, on
+  top of the spike's mechanism. **Lands first for single-process backends**
+  (in-address-space registry); lands for the stock daemon only via the
+  coordinator from the spike. Delivers **G3**.
+  *Touches (single-process):* backend store implementation, `build-result`.
+  *Touches (stock daemon):* the coordinator from the spike, daemon/serve
+  handlers, `build/derivation-building-goal.cc`; note there is **no** simple
+  in-process `build/worker.{cc,hh}` structure that suffices (see §2.3/§4.3.3).
 
 * **Phase 4 — Store-split log parity + cleanup (low priority).** Verify
   and test that streaming (Phase 2) and fetch (Phase 0) behave identically
@@ -838,8 +986,15 @@ Each phase is independently shippable and testable.
 
 ## 10. Open questions
 
+0. **Cross-process coordination mechanism (the blocker, §4.3.3).** Which of
+   coordinator-process / shared-memory / single-process-daemon does the
+   stock `nix-daemon` adopt for cross-connection dedup/attach? This is the
+   prerequisite for Phase 3, §4.7.4 re-attach, and registry introspection on
+   the stock daemon, and bounds every promise those make. Listed first
+   because it gates the others.
 1. **Replay buffer policy.** Full log vs. head+tail cap, and the
-   truncation-marker UX for very long builds.
+   truncation-marker UX for very long builds — its *location* is decided by
+   Q0 (process memory vs. coordinator-owned ring buffer).
 2. **Cancellation across tenants.** Exact semantics when the *originating*
    session detaches but late joiners remain — confirmed reference-counted
    here, but interactions with `--keep-going` and timeouts need a test
@@ -866,24 +1021,30 @@ Each phase is independently shippable and testable.
 
 ## 11. Summary
 
-Build logs already stream over `ssh-ng://` and persist via `LogStore`, and
-dedup already happens inside the in-process `Worker` — but only in
-fragments. The validated matrix (§2.6–2.7) shows three concrete holes:
-**`nix log` is unsupported over `ssh-ng` (Gap A)**, the **serve (`ssh://`)
-hop drops logs upstream (Gap B)**, and **build output is hidden by default
-so remote failures are silent (Gap C)** — the last is what users hit first,
-e.g. a CI `nix build --store ssh-ng://…` that reports only `exit code 127`
-with no log. Meanwhile dedup never fans its log out to a second client and
-the protocol fights elastic backends instead of cooperating with them.
+Build logs already stream over `ssh-ng://` and persist via `LogStore` — but
+only in fragments. The validated matrix (§2.6–2.7) shows three concrete
+holes: **`nix log` is unsupported over `ssh-ng` (Gap A)**, the **serve
+(`ssh://`) hop drops logs upstream (Gap B)**, and **build output is hidden
+by default so remote failures are silent (Gap C)** — the last is what users
+hit first, e.g. a CI `nix build --store ssh-ng://…` that reports only
+`exit code 127` with no log.
 
-This RFC unifies the existing fragments behind a **Build Session**
-abstraction and a server-side **Build Registry**, and delivers the
-operational wins in a phased, backward-compatible order:
-`nix log` over ssh-ng (Gap A) → enrich results + fail-loud (Gap C / G8) →
-stream + close Gap B → dedup/attach → introspection → elastic-backend
-friendliness → converge on `ssh-ng://`. Throughout, the serve protocol
-stays additive so **Hydra keeps working** (G7), the design **cooperates
-with elastic multi-tenant backends like nixbuild.net** rather than working
-around them (G6), and the
-eval-store/build-store split — already functional — simply inherits the
-same uniform logging as everything else.
+These three gaps — the bulk of the operator pain — are closed by Phases
+0–2 and 4 with **no shared-state work at all**, and that is the spine of
+this RFC. The headline dedup/attach feature is more ambitious and honestly
+scoped: the stock `nix-daemon` is fork-per-connection (§2.3), so there is
+**no shared `Worker`** to lift; cross-client dedup with log fan-out and
+re-attach needs a new cross-process coordination mechanism (§4.3.3), which
+this RFC frames as a gated design spike. It lands natively and first on
+single-process / elastic backends (nixbuild.net-style endpoints), and on
+the stock daemon only once that spike resolves.
+
+The whole is unified behind a **Build Session** abstraction and a
+**Build Registry** owned by whatever schedules builds, delivered in a
+phased, backward-compatible order: `nix log` over ssh-ng (Gap A) → enrich
+results + fail-loud (Gap C / G8) → stream + close Gap B → *(spike)* →
+dedup/attach → introspection → elastic-backend friendliness → converge on
+`ssh-ng://`. Throughout, the serve protocol stays additive so **Hydra keeps
+working** (G7), the design **cooperates with elastic multi-tenant backends
+like nixbuild.net** (G6), and the eval-store/build-store split — already
+functional — simply inherits the same uniform logging as everything else.

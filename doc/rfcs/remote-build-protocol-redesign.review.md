@@ -154,3 +154,62 @@ fork-per-connection daemon (`daemon.cc:352-382`), so dedup/attach/replay/
 reattach needs either explicit scoping to single-process backends or a new
 section proposing cross-process coordination. Fix the three line/path nits
 while in there.
+
+---
+
+## Response (RFC author)
+
+Thank you — the fork-per-connection finding is correct and was the right
+thing to catch. I verified it independently before revising:
+`startProcess(...)` in `daemonLoop` forks a child per connection, each doing
+its own `openStore()` (`src/nix/unix/daemon.cc`), and cross-process
+coalescing is via output `PathLocks`
+(`derivation-building-goal.cc:437-497`, `outputLocks.lockPaths(...)`), with
+no log fan-out. The RFC has been revised accordingly; I took option (a) **and**
+(b) — explicit scoping *and* a proposed mechanism.
+
+**Major gap (§2 of review) — addressed:**
+
+- **§2.3 rewritten** to state the daemon is fork-per-connection with no
+  shared `Worker`, that coalescing is by output `PathLocks` (not
+  goal-sharing), and that this provides no log fan-out. The false "shares
+  one goal" claim is removed.
+- **§4.3 rewritten** with a scope note up front: it is the one feature that
+  is *not* a thin exposure of existing capability, is conditional on
+  §4.3.3, and splits into single-process backends (native, first) vs. the
+  stock daemon (needs the coordinator). The "generalises `initGoalIfNeeded`"
+  claim is corrected.
+- **New §4.3.3 "Cross-process build coordination"** proposes the three
+  candidate mechanisms (coordinator process / shared memory / single-process
+  daemon), recommends the coordinator as the starting point, and marks the
+  choice as a gated design spike.
+- **§4.7.4 re-attach** now states plainly it is impossible in the stock
+  daemon (`MonitorFdHup` → child exits) and depends on §4.3.3.
+- **Reference-counted cancellation** and the **replay buffer location** are
+  re-scoped to depend on §4.3.3.
+
+**Phasing (§5 of review) — addressed:** a **design spike** is inserted
+before Phase 3; the plan now states explicitly that Phases 0–2/4 deliver
+Gaps A/B/C with no shared state, as the "even if dedup never lands" core;
+Phase 3 is split into single-process vs. coordinator tracks and its
+"Touches" no longer implies a simple in-process structure.
+
+**Other risks (§4 of review) — addressed:**
+
+- **Activity tagging (§4.2)** expanded from a sentence into the load-bearing
+  detail: a per-build root activity, `parent`-based attribution, and a
+  client-side `ActivityId → build id` index (also used by the on-failure
+  dump).
+- **`maxJobs` as a hint (§4.7.1)** is now explicitly **opt-in**; default
+  hard-cap semantics are unchanged.
+- **Gap B double-logging (Phase 2)** caveat added.
+- **Hydra field freeze (Q4)** added to §7 as an explicit rule: do not freeze
+  the serve 3.0 wire until the Hydra field set is agreed; prototype behind an
+  unstable version meanwhile.
+- **Replay buffer (Q1)** now cross-references §4.3.3 for its location.
+- A new **Q0** names the cross-process coordination mechanism as the
+  blocking open question.
+
+**Nits — fixed:** `legacy-ssh-store.cc:221`→`:222` (all occurrences);
+`get-build-log.cc`→`libcmd/get-build-log.cc`; the distributed-build hook's
+full path `src/nix/build-remote/build-remote.cc` is now noted (see §2.1).
