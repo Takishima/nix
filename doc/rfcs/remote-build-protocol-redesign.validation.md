@@ -27,7 +27,7 @@
 > |---|---|---|
 > | **F-INT** | ✅ **Freezable now** — no remaining gate | — (the §3 internal coordinator interface is fully validated by Workstream A; productionizing it in `libstore`/`daemon` is Phase 3 *implementation*, not a freeze gate) |
 > | **F-WIRE** | ⏳ **Nix-side cleared**, freeze still blocked | the **Hydra field set** for the public Build Session additions (RFC §7 / Q4) — external; T1–T3 (B) and C-a…C-f (C) are green |
-> | **F-SERVE30** | ⏳ **Layout + back-compat proven**, freeze still blocked | **D3.1** named-maintainer sign-off, **D3.2** queue-runner branch, **D3.4** ≥1-cycle soak — all external/time-gated; D1/D2/D3.3 proven in-prototype (D3.3 still owes a port into `libstore-tests`) |
+> | **F-SERVE30** | ⏳ **Layout + back-compat proven**, freeze still blocked | **D3.1** named-maintainer sign-off, **D3.2** queue-runner branch, **D3.4** ≥1-cycle soak — all external/time-gated; D1/D2/D3.3 proven in-prototype (D3.3 still owes a port into `libstore-tests`). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
 >
 > The honest one-liner: **F-INT resolves now; F-WIRE and F-SERVE30 have their
 > engineering preconditions discharged but cannot freeze until Hydra coordinates

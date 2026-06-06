@@ -20,8 +20,17 @@ signed off.
 
 ## What it implements (D1, decisions B3 §3)
 
-The **frozen-at-3.0 diagnostic core**, appended **after** the 2.8 `builtOutputs`
-block under a `>= {3,0}` guard, in **binary length-prefixed** form (not JSON):
+The **frozen diagnostic core**, appended **after** the 2.8 `builtOutputs`
+block under a `>= {2,9}` guard, in **binary length-prefixed** form (not JSON):
+
+> **Compatibility correction (2026-06).** The core ships as a **minor bump within
+> major 2** (`{2,9}`), *not* a `{3,0}` major bump. The serve **client** handshake
+> rejects a server with a different major *before* `min()`
+> (`serve-protocol-connection.cc:18`), so a `{3,0}` builder would break every
+> already-deployed client (old client → upgraded builder). `serve.hh` now models
+> that guard (`clientAcceptsServer`) and gates the core at `{2,9}`; `{3,0}` is
+> kept only as the constant the regression test proves is rejected. See decisions
+> Blocker 3 ("Compatibility correction").
 
 - `logRef` — the resolved drv path the builder asserts it persisted the log under
   (the `LogStore::getBuildLog` key);
@@ -31,8 +40,9 @@ block under a `>= {3,0}` guard, in **binary length-prefixed** form (not JSON):
   `AddToStoreNar = 9`), never sent unless the negotiated version supports it.
 
 The **deferred set** — `builderId`, `deduplicated` — lives behind an explicitly
-*unstable* version (`{3,99}` here); its byte layout is **not** a back-compat
-promise, because its semantics depend on the still-spiking Phase 3 coordinator.
+*unstable* version (`{2,99}` here — also within major 2 so it stays reachable
+past the client guard); its byte layout is **not** a back-compat promise, because
+its semantics depend on the still-spiking Phase 3 coordinator.
 
 `SERVE_PROTOCOL_VERSION` is **not** bumped: the core lives behind a provisional
 gate until the four freeze criteria are met (see below).
@@ -63,9 +73,10 @@ make dump    # print golden hex (to regenerate the constants in tests.cc)
 
 | Client | Server | Negotiated | Behaviour |
 |---|---|---|---|
-| old Hydra (≤2.8) | new Nix (3.0) | 2.8 | today's exchange; no new fields/op |
-| new Hydra (3.0) | old Nix (≤2.8) | 2.8 | Hydra falls back to out-of-band log capture; `QueryBuildLog` not sent |
-| new | new | 3.0 | full diagnostic core active |
+| old Hydra (≤2.8) | new Nix builder ({2,9}) | 2.8 | today's exchange; no new fields/op |
+| new Hydra ({2,9}) | old Nix builder (≤2.8) | 2.8 | Hydra falls back to out-of-band log capture; `QueryBuildLog` not sent |
+| new | new | {2,9} | full diagnostic core active |
+| any client | builder advertising `{3,0}` | — | **client rejects at handshake (`major != 2`)** — why the core is `{2,9}`, not `{3,0}` |
 
 ## What this does NOT do (out of scope / external)
 
@@ -90,10 +101,14 @@ the layout become a back-compat promise.
 
 **Faithful:** the version-gated ladder structure mirrors `serve-protocol.cc`
 exactly (status, errorMsg, the `>= {2,3}` time fields, the `>= {2,8}` binary
-`builtOutputs` map with the `>= {2,6}` JSON-hack fallback, then the `>= {3,0}`
+`builtOutputs` map with the `>= {2,6}` JSON-hack fallback, then the `>= {2,9}`
 core); the wire primitives mirror Nix's `serialise.hh` (8-byte LE integers,
 length-prefixed strings padded to 8), so the golden bytes are directly
-comparable in shape to the real output; `Command = 10`; the `min()` handshake.
+comparable in shape to the real output; `Command = 10`; the `min()` handshake;
+**and the client handshake's pre-`min()` major-version guard
+(`clientAcceptsServer`, faithful to `serve-protocol-connection.cc:18`) — the
+check that makes a `{3,0}` major bump a back-compat break and forces the `{2,9}`
+choice.** (An earlier revision modelled only `min()`, which masked this.)
 
 **Modelled / simplified:** `BuildResult` carries a representative subset of
 fields (not the full realisation/`UnkeyedRealisation` graph — modelled as a

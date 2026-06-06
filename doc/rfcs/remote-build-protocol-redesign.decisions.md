@@ -342,9 +342,36 @@ as frozen.
 
   | Client | Server | Negotiated | Behaviour |
   |---|---|---|---|
-  | old Hydra (≤2.8) | new Nix (3.0) | 2.8 | today's exchange; no new fields/op ✅ |
-  | new Hydra (3.0) | old Nix (≤2.8) | 2.8 | Hydra falls back to out-of-band log capture; `QueryBuildLog` not sent ✅ |
+  | new Hydra (client, ≥3.0) | old Nix builder (server, ≤2.8) | 2.8 | Hydra falls back to out-of-band log capture; `QueryBuildLog` not sent ✅ |
   | new | new | 3.0 | full diagnostic core active ✅ |
+
+> **Compatibility correction (2026-06) — the version number must stay in major
+> 2; do *not* bump to `(3 << 8 | 0)`.** The `min()` handshake only protects
+> back-compat *within the same major*. The serve **client** handshake hard-rejects
+> a server whose major differs (`serve-protocol-connection.cc:18`:
+> `if (remoteVersion.major != 2 || remoteVersion < {2,5}) throw "unsupported …"`),
+> and this check runs **before** `min()`. Because the builder runs
+> `nix-store --serve` (server) and Hydra / `nix build --store ssh://` is the
+> client, the breaking direction is **old client → upgraded (major-3) builder**:
+> the old client reads the builder's `{3,0}`, sees `3 != 2`, and throws — the
+> connection never reaches field negotiation. This is the common
+> "upgrade the build farm before all schedulers" case, so it is a real
+> regression, not a corner case. Already-shipped clients carry this guard
+> immutably, so a later relaxation cannot fix them retroactively.
+>
+> **Resolution:** ship the diagnostic core as a **minor bump within major 2**
+> (next free minor — `SERVE_PROTOCOL_VERSION = (2 << 8 | 9)`), gated `>= {2,9}`,
+> exactly as every prior serve feature has been. Then old client → new builder
+> negotiates `min({2,8},{2,9}) = {2,8}` and works unchanged. "Serve 3.0" stays
+> the *feature* name in this document; the *wire* version is **2.9**. A genuine
+> major bump is deferred to a future breaking change, and only after a
+> guard-relaxing client release has propagated for ≥1 cycle. The corrected
+> first matrix row:
+>
+> | old client (≤2.8) | new builder | negotiated | behaviour |
+> |---|---|---|---|
+> | **at `{2,9}`** (resolution) | reads `{2,9}` → `2==2` ✓ | **2.8** | today's exchange; no new fields/op ✅ |
+> | ~~at `{3,0}`~~ (rejected) | reads `{3,0}` → `3≠2` | — | **handshake throws; build fails** ❌ |
 
 ### 4. Residual risk and the guarding test
 
@@ -357,12 +384,20 @@ as frozen.
   by pairing `logRef` with the explicit "persisted" assertion (RFC §4.4) and by
   Phase 0 making `keepLog`/`verbosity` suppression conditional
   (`nix-store.cc:908-909`).
+- **Risk (the §3 compatibility correction):** a **major** version bump (`{3,0}`)
+  is rejected by every already-deployed client at handshake
+  (`serve-protocol-connection.cc:18`, `major != 2`), breaking old client → new
+  builder. Mitigated by shipping the core as a **minor** bump within major 2
+  (`{2,9}`), so it negotiates down transparently like every prior serve feature;
+  a real major bump is deferred behind a propagated guard-relaxing release.
 - **Guarding test (RFC §9 "Protocol characterisation tests"):** golden
   serializations of `BuildResult` at 2.3/2.6/2.8/3.0 and of a `QueryBuildLog`
   round-trip; an explicit **2.8-reads-3.0-bytes** test asserting the 2.8 reader
   consumes exactly the 2.8 fields and the negotiated-down peer never emits the
   3.0 tail; plus a functional test that `nix log` over the serve path returns the
-  real log via `QueryBuildLog` (Gap A/§4.5).
+  real log via `QueryBuildLog` (Gap A/§4.5); **and a handshake test that an
+  old client (`major == 2` guard) reaching a `{2,9}` builder negotiates `{2,8}`
+  and connects — the regression a `{3,0}` major bump would cause.**
 
 ### 5. Owner + follow-up
 

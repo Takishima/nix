@@ -6,9 +6,11 @@
 // version-gated `BuildResult` serializer ladder in `src/libstore/serve-protocol.cc`
 // (the `>= {2,3}/{2,6}/{2,8}` pattern), extended with:
 //
-//   * the frozen-at-3.0 **diagnostic core** appended AFTER the 2.8 builtOutputs
-//     block under a `>= {3,0}` guard, in binary length-prefixed form (NOT JSON):
-//     logRef, failurePhase, exitCode, logTail (decisions B3 §3);
+//   * the frozen **diagnostic core** appended AFTER the 2.8 builtOutputs block
+//     under a `>= {2,9}` guard (a MINOR bump within major 2 — NOT {3,0}, which
+//     the client handshake would reject; see clientAcceptsServer), in binary
+//     length-prefixed form (NOT JSON): logRef, failurePhase, exitCode, logTail
+//     (decisions B3 §3 + "Compatibility correction");
 //   * `QueryBuildLog` as a new `Command = 10` (next after AddToStoreNar = 9),
 //     never sent unless the negotiated version supports it;
 //   * the deferred set (builderId, deduplicated) behind an *unstable* gate whose
@@ -48,10 +50,28 @@ inline Version negotiate(Version a, Version b) { return (a >= b) ? b : a; }
 
 // Known versions on the ladder.
 inline constexpr Version V2_3{2, 3};
+inline constexpr Version V2_5{2, 5};   // floor enforced by the client handshake
 inline constexpr Version V2_6{2, 6};
 inline constexpr Version V2_8{2, 8};   // current SERVE_PROTOCOL_VERSION
-inline constexpr Version V3_0{3, 0};   // serve 3.0 — frozen diagnostic core
-inline constexpr Version V3_unstable{3, 99}; // deferred builderId/deduplicated (NOT frozen)
+inline constexpr Version V2_9{2, 9};   // diagnostic core — the COMPATIBLE wire version
+inline constexpr Version V3_0{3, 0};   // serve "3.0" feature name — REJECTED as a wire bump (see below)
+inline constexpr Version Vunstable{2, 99}; // deferred builderId/deduplicated (NOT frozen); within major 2 so it stays reachable past the client guard
+
+// The serve *client* handshake guard, faithful to serve-protocol-connection.cc:18:
+//
+//     if (remoteVersion.major != 2 || remoteVersion < {2,5}) throw "unsupported …";
+//
+// This runs BEFORE min(), so it is NOT something the additive-layout / min()
+// reasoning protects: an already-deployed client rejects any server whose major
+// differs. Because the builder is the server and the scheduler/Hydra is the
+// client, a {3,0} builder breaks every old client at handshake. The diagnostic
+// core therefore ships as a MINOR bump within major 2 (V2_9), which this guard
+// accepts and min() then negotiates down for old peers. Returns false if the
+// client would throw "unsupported protocol version".
+inline bool clientAcceptsServer(Version remoteServerVersion)
+{
+    return remoteServerVersion.major == 2 && remoteServerVersion >= V2_5;
+}
 
 // ---- serve Command enum (the new op is appended, never renumbered) ----------
 
@@ -65,10 +85,12 @@ enum class Command : uint64_t {
     QueryClosure      = 7,
     BuildDerivation   = 8,
     AddToStoreNar     = 9,
-    QueryBuildLog     = 10,  // NEW (decisions B3 §3); guarded by >= {3,0}
+    QueryBuildLog     = 10,  // NEW (decisions B3 §3); guarded by >= {2,9}
 };
 
-inline bool supportsQueryBuildLog(Version negotiated) { return negotiated >= V3_0; }
+// QueryBuildLog ships with the diagnostic core at the COMPATIBLE wire version
+// V2_9 (not {3,0} — see clientAcceptsServer above).
+inline bool supportsQueryBuildLog(Version negotiated) { return negotiated >= V2_9; }
 
 // ---- wire primitives (Nix serialise.hh shape) ------------------------------
 
@@ -161,8 +183,9 @@ inline void write(Sink & to, Version v, const BuildResult & res)
         }
     }
 
-    // 3.0 diagnostic core, appended AFTER builtOutputs, binary, >= {3,0}.
-    if (v >= V3_0) {
+    // Diagnostic core, appended AFTER builtOutputs, binary, gated >= {2,9}
+    // (the compatible wire version; "3.0" is only the feature name).
+    if (v >= V2_9) {
         to.putString(res.logRef);
         to.putString(res.failurePhase);
         to.putInt(uint64_t(res.exitCode));
@@ -170,7 +193,7 @@ inline void write(Sink & to, Version v, const BuildResult & res)
     }
 
     // Deferred/unstable set — only on the explicitly-unstable version.
-    if (v >= V3_unstable) {
+    if (v >= Vunstable) {
         to.putString(res.builderId);
         to.putInt(res.deduplicated);
     }
@@ -208,14 +231,14 @@ inline BuildResult read(Source & from, Version v)
         }
     }
 
-    if (v >= V3_0) {
+    if (v >= V2_9) {
         res.logRef = from.getString();
         res.failurePhase = from.getString();
         res.exitCode = int64_t(from.getInt());
         res.logTail = from.getString();
     }
 
-    if (v >= V3_unstable) {
+    if (v >= Vunstable) {
         res.builderId = from.getString();
         res.deduplicated = uint8_t(from.getInt());
     }

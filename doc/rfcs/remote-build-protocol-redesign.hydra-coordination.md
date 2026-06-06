@@ -76,8 +76,9 @@ build-remote hook).
 
 ### 1. Extended `BuildResult` fields
 
-Appended **after** the existing 2.8 `builtOutputs` block, under a `>= {3,0}`
-guard, in **binary length-prefixed** form (the serve protocol is binary; JSON
+Appended **after** the existing 2.8 `builtOutputs` block, under a `>= {2,9}`
+guard (see the version-number note below — the wire version is 2.9, not 3.0),
+in **binary length-prefixed** form (the serve protocol is binary; JSON
 appears only as the pre-existing 2.6 realisation back-compat shim, so we are
 *not* using it here). No existing field changes meaning; a 2.8 reader stops
 before the new tail.
@@ -115,16 +116,30 @@ Phase 0 and is independent of the dedup work.)
 ## Back-compat guarantee (no flag day, both directions)
 
 Gated by the existing `min(client, server)` handshake
-(`serve-protocol-connection.cc:8-33`):
+(`serve-protocol-connection.cc:8-33`) — **and shipped as a minor bump within
+major 2** (`SERVE_PROTOCOL_VERSION = {2,9}`, *not* `{3,0}`; see the note below):
 
 | Client | Server | Negotiated | Behaviour |
 |---|---|---|---|
-| old Hydra (≤2.8) | new Nix (3.0) | 2.8 | today's exchange; no new fields/op |
-| new Hydra (3.0) | old Nix (≤2.8) | 2.8 | Hydra falls back to out-of-band log capture; `QueryBuildLog` not sent |
-| new | new | 3.0 | full diagnostic core active |
+| old Hydra (≤2.8) | new Nix builder ({2,9}) | 2.8 | today's exchange; no new fields/op |
+| new Hydra ({2,9}) | old Nix builder (≤2.8) | 2.8 | Hydra falls back to out-of-band log capture; `QueryBuildLog` not sent |
+| new | new | {2,9} | full diagnostic core active |
 
 The CA-realisation fields Hydra already consumes
 (`std::map<OutputName, UnkeyedRealisation>` at 2.8) are **untouched**.
+
+> **Why minor-within-major-2 and not "3.0" on the wire.** The serve **client**
+> handshake hard-rejects a server with a different major
+> (`serve-protocol-connection.cc:18`: `if (remoteVersion.major != 2 || … ) throw`),
+> and that check runs **before** `min()`. Since the builder is the *server* and
+> Hydra is the *client*, a `{3,0}` builder would make **every already-deployed
+> Hydra/`nix` client throw at handshake** — the common "upgrade the build farm
+> first" case breaks, and the guard in shipped clients can't be patched
+> retroactively. So the diagnostic core ships as serve **2.9** (gated `>= {2,9}`),
+> exactly like every prior serve feature; old clients negotiate `min` down to 2.8
+> and keep working. "Serve 3.0" remains the *feature* name; the *wire* version is
+> 2.9. (This corrects the earlier `(3 << 8 | 0)` framing — see decisions Blocker 3,
+> "Compatibility correction".)
 
 ---
 
@@ -162,6 +177,12 @@ the queue-runner branch remain.
    `BuildResult` later — or both at once?
 5. **Who is the sign-off owner** for the frozen serve 3.0 layout on the Hydra
    side?
+6. **Version number:** we propose shipping the core as serve **2.9** (minor bump,
+   major stays 2) rather than `{3,0}`, because the client handshake rejects a
+   different major before `min()` and a `{3,0}` builder would break every already
+   deployed client. Does the queue-runner rely on the major number anywhere (e.g.
+   feature gating on `GET_PROTOCOL_MAJOR`) such that a minor-only bump is a
+   problem on your side?
 
 ## Links
 
