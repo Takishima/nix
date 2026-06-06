@@ -91,8 +91,8 @@ whole spike necessary; it is verified, not assumed.
   `std::map<StorePath, std::map<OutputName, std::weak_ptr<DerivationGoal>>>`
   (`src/libstore/include/nix/store/build/worker.hh:123`); `makeDerivationGoal`
   keys into it at `worker.cc:89-97`.
-* The `Worker` holds **both** stores — `Store & store` (build) and
-  `Store & evalStore` (`worker.hh:201`, ctor `worker.hh:236`). This is the
+* The `Worker` holds **both** stores — `Store & store` (build, `worker.hh:200`)
+  and `Store & evalStore` (`worker.hh:201`, ctor `worker.hh:236`). This is the
   in-process embodiment of the eval-store/build-store split (RFC §2.4), and it
   matters for §2.7 below.
 
@@ -244,8 +244,8 @@ disconnect/cancel.
 
 | Criterion | Assessment |
 |---|---|
-| **Fault isolation** | **Changed, and this is the central honest trade-off.** The build now runs in the coordinator's address space (or a child it forks — see below), not in the connection child. A build that segfaults/OOMs no longer takes down only "its" connection child. **Mitigation that preserves today's isolation:** the coordinator does **not** run builds inline; it keeps the existing `fork()` per build (the daemon already `fork()`s per build internally via `startProcess`/build hooks), so a crashing builder kills a *build* subprocess, the coordinator observes `SIGCHLD`/exit, marks the `Build` failed, and fans the failure out to subscribers. The coordinator process itself stays small and supervises; it does not link the build into its own heap. Net: isolation is **preserved at the build-subprocess boundary**, and the new single-point-of-failure is the (small, supervisory) coordinator, addressed by the next row. |
-| **Lifecycle & cleanup** | The coordinator is the one place to do cleanup, which is the upside. On build-subprocess death: reap, fail the `Build`, release its output `PathLocks` (still the cross-process correctness floor, §1.3), drop the registry entry, flush the persisted log. On connection-child death: the coordinator sees the per-session control socket close and decrements the refcount (§3.4). **On coordinator death:** every registry entry and buffer is lost; in-flight builds are orphaned. We make this *safe* (not lossless): builds hold real output `PathLocks` on disk, so a restarted coordinator + the existing lock/validity logic never double-builds or corrupts — the worst case degrades to **today's** behaviour (work coalesced by locks, no fan-out) until the build finishes. The coordinator is restartable; children that lose it fall back to building locally (see §5.1). Socket is a well-known path under the store's state dir; a stale socket is detected and re-created on daemon start. |
+| **Fault isolation** | **Changed, and this is the central honest trade-off — M1 is a *hybrid*, isolated on one axis and not the other.** The coordinator does **not** run builds inline: it keeps the existing `fork()` per build (the daemon already `fork()`s per build internally via `startProcess`/build hooks), so a **builder-subprocess** crash/OOM (the sandboxed, untrusted code) kills only that *build* subprocess; the coordinator observes `SIGCHLD`/exit, marks the `Build` failed, and fans the failure out to subscribers. On that axis isolation **equals today's** (builder crashes stay contained). **But** the coordinator runs the real `Worker` — goal/resolution/scheduling/fan-out logic — for **all** clients in one address space, so a bug in *that* (non-sandboxed) code crashes the coordinator and takes down **every** attached client's build at once. **On the "Worker-logic crash" axis, M1 ≈ M3** (§2.4): both are a single shared crash domain for the scheduling layer; M1's only isolation advantage over M3 is that *builder* code stays forked. So the honest statement is: M1 preserves today's **builder-crash** containment but introduces a shared crash domain for coordinator-`Worker` bugs across connections (the same class M3 carries). The mitigations are: keep the coordinator small and supervisory (it links no builder code into its heap), and the next row's degrade-to-`PathLocks` safety net bounds the *consequences* of a coordinator crash even though it cannot prevent the shared-fate. |
+| **Lifecycle & cleanup** | The coordinator is the one place to do cleanup, which is the upside. Note the builder subprocess's **parent moves from the connection child to the coordinator** (it is the coordinator that now `fork()`s it), so `SIGCHLD`/`wait()` reaping ownership moves with it — the coordinator, not the child, must install the `SIGCHLD` handling and reap. On build-subprocess death: reap, fail the `Build`, release its output `PathLocks` (still the cross-process correctness floor, §1.3), drop the registry entry, flush the persisted log. On connection-child death: the coordinator sees the per-session control socket close and decrements the refcount (§3.4). **On coordinator death:** every registry entry and buffer is lost; in-flight builds are orphaned. We make this *safe* (not lossless): builds hold real output `PathLocks` on disk, so a restarted coordinator + the existing lock/validity logic never double-builds or corrupts — the worst case degrades to **today's** behaviour (work coalesced by locks, no fan-out) until the build finishes. The coordinator is restartable; children that lose it fall back to building locally (see §5.1). Socket is a well-known path under the store's state dir; a stale socket is detected and re-created on daemon start. |
 | **Backpressure** | Cleanest of the three. Each subscriber is a separate socket with its own kernel send buffer. The coordinator writes each frame to each subscriber's pipe; a slow subscriber's pipe fills. Policy (decided here, §3.6): the coordinator never blocks the build on a slow subscriber — it buffers up to a per-session cap, and past the cap it **drops that one session to "replay-from-persisted-log" mode** (disconnect its live tail, leave the build and other subscribers untouched). The build's own rate is bounded by the replay-buffer cap (§3.5), not by the slowest client. |
 | **Security / trust** | Strongest story. The coordinator authenticates each connecting child the same way `daemonLoop` already does (`authPeer`, `src/nix/unix/daemon.cc:342`); the **child passes the session's resolved trust level and the derivation it is authorized to build** in the start-or-attach RPC, and the coordinator checks authorization **before** subscribing (RFC §6). Because the coordinator is a normal Nix process with the existing trust machinery, the check is the *same* code path as today's `BuildDerivation` handler, not a new ACL system. `QueryActiveBuilds` filtering (§3.7) lives in one place. |
 | **Impl. blast radius** | Medium. New: a coordinator main loop, a small control protocol (start-or-attach / subscribe / cancel / query), and frame relay in the connection child. Changed: the daemon gains a "connect to coordinator if present, else build locally" branch. Crucially **the client-facing wire (worker/serve protocol) does not change shape** — the child still speaks `STDERR_*` to the client. The prototype is genuinely throw-away: it can be a standalone sidecar binary + a feature-flagged relay path, deleted wholesale if rejected. |
@@ -290,7 +290,7 @@ already existed.
 
 | Criterion (weight) | M1 Coordinator | M2 Shared memory | M3 Single-process |
 |---|---|---|---|
-| Fault isolation | ◑ preserved at build-subproc boundary | ● worst (shared failure domain) | ● strictly worse than today |
+| Fault isolation | ◑ builder crashes contained; coordinator-`Worker` bug shared (≈ M3 on that axis) | ● worst (shared failure domain, incl. corruption) | ● strictly worse than today |
 | Crash cleanup | ◔ one place; coordinator-death degrades to today | ● orphan segments, robust-futex, pid reuse | ◑ all-or-nothing |
 | Backpressure | ○ per-socket, drop-slow-client | ◑ lossy ring or throttles build | ◔ easy but shares daemon heap |
 | Security / trust | ○ existing trust code, check-before-subscribe | ● segment *is* the leak | ○ existing trust code |
@@ -301,9 +301,13 @@ already existed.
 (○ good · ◔ ok · ◑ mixed · ● poor)
 
 **Recommendation: Mechanism 1 — the coordinator process — as the RFC already
-suspected (§4.3.3).** It is the only option that (a) **preserves today's fault
-isolation** by keeping builds in `fork()`ed subprocesses while adding a *small,
-supervisory* coordinator, (b) concentrates the genuinely hard parts — refcounted
+suspected (§4.3.3).** It is the only option that (a) **preserves today's
+*builder-crash* isolation** by keeping builders in `fork()`ed subprocesses while
+adding a *small, supervisory* coordinator — with the honest caveat (§2.2) that a
+bug in the coordinator's own `Worker`/scheduling logic is a shared crash domain
+across connections, the same class M3 carries; M1's win over M3 here is that it
+is a far smaller, more contained piece of code, not that the crash domain
+differs in kind, (b) concentrates the genuinely hard parts — refcounted
 cancellation, replay-buffer ownership, `QueryActiveBuilds`, trust filtering — in
 **one place running the existing trust code**, (c) keeps the client-facing wire
 identical so Phase 3 framing is decoupled from the mechanism, and (d) yields a
@@ -336,9 +340,17 @@ client B ──socket──▶ daemon child B ─┘                    (per sto
 
 * **One coordinator per store directory**, addressed by a Unix socket at a
   well-known path under the store's state dir (e.g.
-  `$NIX_STATE_DIR/coordinator.socket`). Started lazily by the first daemon child
-  that wants it (or as a daemon sub-role), idle-exits after a grace period with
-  no builds and no subscribers.
+  `$NIX_STATE_DIR/coordinator.socket`), **permissioned and peer-verified per
+  §3.7.1** so only genuine daemon children of the right uid can speak to it.
+  Started lazily by the first daemon child that wants it (or as a daemon
+  sub-role), idle-exits after a grace period with no builds and no subscribers.
+  **Lazy spawn has two lifecycle races that the prototype must handle (open
+  question, §6):** (a) two children racing to spawn the coordinator — resolved
+  by an atomic `bind()`/lock-file election where the loser connects to the
+  winner; and (b) the coordinator idle-exiting between a child's `connect()` and
+  its first request — resolved by a "decline-and-respawn" handshake (a child that
+  hits a closing/closed coordinator re-elects and retries). These must be called
+  out so a flaky spawn is not misdiagnosed as a coordination bug.
 * **Connection children stay fork-per-connection** (§1.1 unchanged). They gain
   one new behaviour: for a build request that negotiated the new capability,
   instead of running the build in-process they open a **control connection** to
@@ -371,11 +383,13 @@ ATTACH_STATE   { resolving | building | finished }    // for Q3, see §3.8
   with every `inputDrv` replaced by its concrete output path. Input-addressed
   drvs map 1:1; CA drvs that resolve identically coalesce. The child computes (or
   forwards) the resolved drv; the coordinator keys the registry on it.
-* **`sessionAuth`** = the trust decision the child already made via `authPeer`
-  (`daemon.cc:342`) **plus** the proof that this session is authorized to build
-  `drvForBuild` (the same check `BuildDerivation` does today, RFC §6). The
-  coordinator re-checks before subscribing — never trusting that the child
-  checked — see §3.7.
+* **`sessionAuth`** = the client's **authenticated identity** as the child
+  established it via `authPeer` (`daemon.cc:342`, def `:212`) — uid and
+  trusted/untrusted flag. The coordinator trusts this *identity* only after
+  peer-verifying that the child itself is a genuine daemon process (§3.7.1), but
+  **re-derives the authorization decision** (may this identity build/attach
+  `drvForBuild`) itself before subscribing — it does not trust the child to have
+  authorized, only to have authenticated. See §3.7.
 
 ### 3.3 `START_OR_ATTACH` — the core operation
 
@@ -478,27 +492,75 @@ Because the buffer is coordinator memory, its size policy (Q1) and the mechanism
 * The build's own memory is bounded by the replay cap, not by the number or
   speed of subscribers.
 
-### 3.7 Trust enforcement (RFC §6) — check before subscribe
+### 3.7 Trust enforcement (RFC §6) — socket authentication, then authorization before subscribe
 
-The coordinator spans clients, so this is load-bearing for security:
+The coordinator spans clients of different trust levels, so this is the
+security linchpin of the whole mechanism. It has **two** distinct layers that
+the spike must keep separate; conflating them is how a shared coordinator turns
+into the very cross-tenant exfiltration oracle M1 is supposed to *avoid* over M2
+(§2.3).
 
-* The child authenticates its client (`authPeer`, `daemon.cc:342`) and passes
-  the resulting trust level + the target derivation in `sessionAuth`.
-* The coordinator **re-runs the authorization check the `BuildDerivation`
-  handler already enforces** (RFC §6, the `daemon.cc` trust comment referenced
-  from `build-remote.cc:324-329`) **before** adding the session to
-  `build.subscribers`. An untrusted client may only attach to a build whose
-  derivation it is **itself authorized to build** (CA derivations, or where the
-  builder trusts it). It can never attach by guessing a `buildKey` for a build
-  it could not have requested — so dedup is **not** a cross-tenant log oracle.
-* `QUERY_ACTIVE` is filtered identically (RFC §4.3.2, §6, §10 Q5): an untrusted
-  caller sees only builds it could itself have requested, or an aggregate count —
-  never another tenant's derivation names. This is a single chokepoint because
-  all queries go through the coordinator.
+#### 3.7.1 Authenticating the control socket itself (the linchpin)
 
-The key property: **authorization is the existing per-session trust code, run in
-one process, before subscription** — not a new ACL system bolted onto a shared
-artifact (contrast M2, §2.3).
+The per-subscribe authorization check below is worthless if **any** local
+process can open the control socket and assert a `sessionAuth`. So the control
+socket is secured exactly as the daemon socket is, and the coordinator verifies
+its peer:
+
+* **Socket access control.** The control socket
+  (`$NIX_STATE_DIR/coordinator.socket`) is created with restrictive ownership
+  and mode — owned by the daemon's uid/`nix-daemon` group, mode `0660` — so only
+  legitimate daemon children (running as the same uid, the only processes that
+  ever `fork()` from `daemonLoop`) can connect at all. This mirrors how the
+  daemon's own listening socket is permissioned.
+* **Peer-credential check.** On every accepted control connection the
+  coordinator reads the connecting peer's `SO_PEERCRED` (uid/pid) — the same
+  primitive `unix::getPeerInfo`/`authPeer` already use on the daemon socket
+  (`daemon.cc:212,342`) — and **requires the peer to be a daemon process running
+  as the daemon's own uid.** A connection from any other uid is refused before a
+  single byte of `sessionAuth` is read. An attacker who cannot already run code
+  as the daemon uid cannot forge `sessionAuth`.
+
+This is the single most important property to get right, and it is what makes
+"the coordinator trusts the child's reported identity" safe: the coordinator
+trusts the child *because it has cryptographically/kernel-verified that the peer
+is a real daemon child of the right uid*, not because it takes the child's word.
+
+#### 3.7.2 Authentication vs. authorization — what the coordinator trusts the child for
+
+These are deliberately split:
+
+* **Authentication (delegated to the child, then peer-verified).** Only the
+  connection child holds the client peer's `SO_PEERCRED`/`authPeer` result
+  (`daemon.cc:342`, def `:212`) — the coordinator never sees the *client's*
+  socket. So the coordinator **does** trust the child's *reported authenticated
+  identity* (uid, trusted/untrusted flag), having first established via §3.7.1
+  that the child is a genuine daemon process. It is not "never trust the child";
+  it is "trust the authenticated identity a verified daemon child reports."
+* **Authorization (re-derived by the coordinator, not delegated).** Whether that
+  identity may build/attach **this** derivation is decided by the coordinator
+  itself, **before** adding the session to `build.subscribers`, by running the
+  **same authorization check the `BuildDerivation` handler already enforces**
+  (RFC §6, the `daemon.cc` trust comment referenced from
+  `build-remote.cc:324-329`). The coordinator does not trust the child to have
+  made this decision; it re-derives it from the reported identity + the
+  derivation. An untrusted identity may attach only to a build whose derivation
+  it is **itself authorized to build** (CA derivations, or where the builder
+  trusts it). It can never attach by guessing a `buildKey` for a build it could
+  not have requested — so dedup is **not** a cross-tenant log oracle.
+
+#### 3.7.3 `QueryActiveBuilds` filtering
+
+`QUERY_ACTIVE` is filtered by the same authorization layer (RFC §4.3.2, §6,
+§10 Q5): an untrusted caller sees only builds it could itself have requested, or
+an aggregate count — never another tenant's derivation names. Single chokepoint,
+because all queries go through the coordinator.
+
+The key property: **authentication is kernel-verified peer creds on a
+permissioned socket; authorization is the existing per-session trust code, run
+in one process, before subscription** — not a new ACL system bolted onto a
+shared artifact (contrast M2, §2.3), and not a socket any local process can
+speak to.
 
 ### 3.8 CA resolution timing (RFC Q3) — registry exposes a `resolving` pre-state
 
@@ -601,6 +663,14 @@ path):
 * **Trust (§3.7, mirrors RFC §9 "Trust tests"):** an unauthorized client's
   `START_OR_ATTACH` / `QUERY_ACTIVE` for a build it could not itself request is
   rejected **before** subscription — it cannot read the log or see the drv name.
+* **Socket authentication (§3.7.1):** a process connecting to the control socket
+  as a *different* uid is refused at the peer-cred check, before any
+  `sessionAuth` is read.
+* **Coordinator throughput (measurement, not pass/fail; §2.3):** run dozens of
+  parallel builds, each with several attached subscribers, and **record the
+  coordinator's CPU and per-frame fan-out cost**. This is data to inform the
+  open question of whether a single event loop suffices or the coordinator needs
+  a sharded/multi-threaded design — not a gate on the spike.
 
 ### 4.3 Explicitly out of scope for the prototype
 
@@ -673,6 +743,13 @@ both backend classes**: a client cannot tell whether the `STDERR_*` frames and
 or from a stock daemon's coordinator-relayed child. That is the whole point of
 confining the mechanism below the wire.
 
+This also suggests a **cheaper de-risking sequence** (sequencing, not extra
+work): because both backend classes exercise the *same* Build Session wire,
+validating the **wire/Session surface** against a single-process backend's
+in-memory broadcaster **first** would prove out the Phase 3 framing before the
+coordinator is built — turning the harder coordinator prototype into a pure
+mechanism validation rather than also a wire validation.
+
 ### 5.4 Items that feed back into the RFC
 
 Surfaced by this spike; **do not** modify the RFC, recorded here per the spike's
@@ -704,10 +781,15 @@ charter:
 cross-process coordination mechanism for the stock `nix-daemon`, and build the
 throw-away prototype of §4 to validate it before freezing any Phase 3 wire
 surface. The coordinator is the only candidate that preserves today's
-build-crash isolation (builds stay in `fork()`ed subprocesses while a small
-supervisory coordinator owns the registry, replay buffer, and refcounts),
+*builder-crash* isolation (builders stay in `fork()`ed subprocesses while a small
+supervisory coordinator owns the registry, replay buffer, and refcounts) — with
+the honest caveat that a bug in the coordinator's own `Worker`/scheduling code is
+a shared crash domain across connections, the same class M3 carries, mitigated
+only by keeping the coordinator small (§2.2) — and
 enforces the RFC §6 trust check *before* subscription using the **existing**
 trust code in **one** place rather than an ad-hoc ACL over a shared artifact,
+**behind a peer-credential-verified, permissioned control socket (§3.7.1) so
+the per-subscribe check cannot be bypassed by a forged `sessionAuth`**,
 keeps the build decoupled from slow clients via per-socket backpressure, and —
 decisively — leaves the client-facing wire byte-identical so the Phase 3 framing
 can be designed independently of the mechanism and so single-process/elastic
@@ -747,3 +829,14 @@ it is its own RFC, not a spike.
 6. **`QueryActiveBuilds` default privacy for untrusted callers (RFC Q5).**
    Aggregate count vs. nothing — a policy choice the coordinator enforces but the
    project must set.
+7. **Coordinator throughput and concurrency ceiling — §2.3.** Every build and
+   every log frame for every connection funnels through one coordinator event
+   loop (O(frames × subscribers) centrally) — a single serialization point in
+   tension with G6's busy-builder/elastic scenario. Whether a single event loop
+   suffices, or the coordinator needs a sharded/multi-threaded design, is a
+   scaling decision the prototype's throughput measurement (§4.2) should inform.
+8. **Lazy-spawn lifecycle posture — §2.4/§3.1.** The spawn-election and
+   "decline-and-respawn" handshakes for (a) two children racing to spawn the
+   coordinator and (b) idle-exit between connect and first use are sketched but
+   not specified; the production approach (election primitive, idle-exit grace,
+   whether to spawn at daemon start instead of lazily) needs a decision.

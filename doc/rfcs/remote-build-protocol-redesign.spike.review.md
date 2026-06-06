@@ -172,3 +172,72 @@ verification**, since that, not the per-subscribe check, is where the trust
 model actually stands or falls. Add coordinator throughput (§2.3) and
 lazy-spawn races (§2.4) to §6's open-questions list. Fix the two trivial
 citation nits while in there.
+
+---
+
+## Response (spike author)
+
+Thank you — both required revisions were spot-on, and the socket-authentication
+gap in particular was the right thing to catch. All points addressed in the
+spike; nothing was waved off.
+
+**Required revision 1 — fault-isolation reframed as a hybrid (review §2.1).**
+
+- **§2.2 fault-isolation row rewritten:** M1 is now stated explicitly as a
+  *hybrid* — builder-subprocess crashes stay contained (equals today), **but**
+  the coordinator runs the real `Worker` for all clients, so a goal/resolution/
+  scheduling bug is a shared crash domain across connections, and **on the
+  "Worker-logic crash" axis M1 ≈ M3**. The only isolation advantage over M3 is
+  that builder code stays forked.
+- **§2.5 scoring narrative adjusted:** the M1 fault-isolation cell now reads
+  "builder crashes contained; coordinator-`Worker` bug shared (≈ M3 on that
+  axis)" instead of the generous "preserved at build-subproc boundary."
+- **§2.2 recommendation and §6 recommendation prose** now say "*builder-crash*
+  isolation" with the explicit M1≈M3 caveat, not "preserves today's fault
+  isolation" unqualified.
+
+**Required revision 2 — coordinator socket authentication specified (review §2.2,
+the linchpin).** §3.7 was restructured into three parts:
+
+- **New §3.7.1 "Authenticating the control socket itself":** the socket is
+  permissioned (daemon uid/`nix-daemon` group, mode `0660`) and the coordinator
+  performs an `SO_PEERCRED` peer-credential check on every control connection,
+  **refusing any peer not running as the daemon's own uid before reading a byte
+  of `sessionAuth`.** This closes the "any local process can forge `sessionAuth`"
+  hole that would have collapsed the trust model.
+- **New §3.7.2 "Authentication vs. authorization":** split per the review.
+  Authentication (the client's identity) is delegated to the child and trusted
+  *only after* the child itself is peer-verified as a genuine daemon process;
+  authorization (may this identity build this drv) is re-derived by the
+  coordinator. The "never trusting the child" wording is corrected to "trust the
+  authenticated identity a verified daemon child reports; re-derive the
+  authorization."
+- **§3.2 `sessionAuth` bullet and §3.1 socket description** tightened to match,
+  with cross-refs to §3.7.1.
+
+**Open questions added to §6 (review §2.3, §2.4).**
+
+- **§6 Q7 — coordinator throughput / concurrency ceiling:** named as the central
+  serialization point in tension with G6; the prototype now **records coordinator
+  CPU and per-frame fan-out cost under dozens of parallel builds** (§4.2, as a
+  measurement, not a gate).
+- **§6 Q8 — lazy-spawn lifecycle races:** the two races (spawn election;
+  idle-exit between connect and first use) are now described in §3.1 with the
+  `bind()`/lock-file election and decline-and-respawn handshakes, and flagged as
+  an open question.
+
+**Minor / precision (review §3).**
+
+- "Never trusting that the child checked" (§3.2/§3.7) tightened per §2.2.1.
+- **`SIGCHLD`/reaping ownership** made explicit in the §2.2 cleanup row: the
+  builder's parent moves from the connection child to the coordinator, so the
+  coordinator installs `SIGCHLD` handling and reaps.
+- **Cheaper de-risking path** added to §5.3: because both backend classes share
+  the same Build Session wire, validating the wire/Session surface against a
+  single-process backend *first* de-risks the Phase 3 framing before the
+  coordinator is built (sequencing, not extra work).
+
+**Citation nits — fixed.** `Store & store` is now cited at `worker.hh:200` and
+`Store & evalStore` at `:201` (§1.2); `authPeer`'s definition at `daemon.cc:212`
+is noted alongside its `:342` call site (§3.7.2, §3.2). The `daemon.cc`
+trust-comment cross-ref is cited as `build-remote.cc:324-329`, matching the RFC.
