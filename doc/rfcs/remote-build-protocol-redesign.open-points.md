@@ -90,19 +90,19 @@ name.
 
 ## 3. Internal-consistency nits (cheap cleanups)
 
-* **3.1 — RFC §4.3 carries pre-decision wording.** The §4.3 prose still lumps
-  `--keep-going` with build roots and then self-corrects mid-section ("refining
-  this section's earlier wording"). Now that Blocker 2 is decided, §4.3 should
-  state the refcount + explicit-root-only rule directly rather than reading as a
-  correction of itself.
-* **3.2 — RFC §10 item 1 lacks a status tag.** Q2/Q3/Q4/Q7 are marked
-  **✅ RESOLVED**; item 1 (replay policy) is not, even though the §10 preamble
-  says the spike resolved its *location*. Tagging it "✅ RESOLVED (location;
-  cap/UX = open, see 1.7)" would make the half-resolved state legible.
-* **3.3 — Owner placeholders.** Blocker 3's owner (decisions §3.5 and the
-  summary table) is an unfilled role ("TBD"). Naming it is a prerequisite for
-  freeze criterion 1, so it is worth tracking as an explicit action, not just a
-  table cell.
+* **3.1 — RFC §4.3 pre-decision wording.** ✅ **DONE.** The §4.3 cancellation
+  bullet now states the refcount + explicit-root-only rule directly; the stale
+  "refining this section's earlier wording" self-correction was removed.
+* **3.2 — RFC §10 status tags.** ✅ **DONE.** §10 items 0 and 1 now carry
+  **✅ RESOLVED** tags (and the §10 preamble notes all of Q0–Q7 are resolved via
+  Blockers 1–3 and O1–O7), matching the other questions.
+* **3.3 — Owner placeholder (external action, tracked).** Blocker 3's owner is
+  still an unfilled role ("Hydra queue-runner maintainer (TBD)") — **this cannot
+  be closed in the docs**: naming a person is the external action tracked as
+  **D3.1 / D4** in the
+  [validation plan](./remote-build-protocol-redesign.validation.md) and is the
+  single biggest external dependency (§2.3). Left open deliberately, with a clear
+  home.
 
 ## 4. One-line summary
 
@@ -110,7 +110,9 @@ The operational half of the design (Gaps A/B/C) is decision-complete and ready.
 The dedup/attach half is *architecturally* settled (coordinator process, frozen
 key/auth rule, agreed cancel matrix, chosen serve-3.0 core), and **all of §1's
 deployment/operational/policy decisions are now made (O1–O7)**. What still
-remains is **execution, not clarification**: the three **validation
-prototypes/tests** that gate the Phase 3 freeze (§2), and — the long pole — a
-**named Hydra maintainer and an open coordination thread** before serve 3.0 can
-be frozen (§2.3). The only doc-level loose ends are the consistency nits in §3.
+remains is **execution, not clarification**: the **validation prototypes/tests**
+that gate the Phase 3 freeze (§2, now consolidated into the
+[validation plan](./remote-build-protocol-redesign.validation.md)), and — the
+long pole — a **named Hydra maintainer and an open coordination thread** before
+serve 3.0 can be frozen (§2.3). The §3 consistency nits are closed except 3.3,
+which is that same external Hydra dependency (it cannot be closed in the docs).

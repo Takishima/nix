@@ -506,8 +506,7 @@ table lives in the decisions record,
 
 * **Lifetime = refcount + an explicit build/GC root only.** A registered
   durable root ("I want this output") is the *sole* `hasRootReasonToContinue()`.
-  **`--keep-going` does *not* extend a shared build's lifetime** (refining this
-  section's earlier wording, which lumped it with roots): keep-going governs
+  **`--keep-going` does *not* extend a shared build's lifetime:** it governs
   whether a client's *sibling* targets proceed after a failure — per-client
   scheduling, not this build's lifetime.
 * **No originator privilege.** The first subscriber is just subscriber #1, so
@@ -1117,21 +1116,23 @@ the log fixes.
 
 ## 10. Open questions
 
-> **Q2, Q3, Q4, and Q7 are now resolved** in the decisions record
-> ([`remote-build-protocol-redesign.decisions.md`](./remote-build-protocol-redesign.decisions.md));
-> their summaries below are marked **RESOLVED** with the decision and a link.
-> (Q0 and Q1 were resolved earlier by the spike: coordinator process, replay
-> buffer in coordinator memory with a head+tail cap.)
+> **All of Q0–Q7 are now resolved** — Q2/Q3/Q4/Q7 in the decisions record
+> ([`remote-build-protocol-redesign.decisions.md`](./remote-build-protocol-redesign.decisions.md))
+> as Blockers 1–3, and Q0/Q1/Q5/Q6 via the spike and operational decisions
+> O1–O7; each summary below is marked **RESOLVED** with the decision and a link.
 
-0. **Cross-process coordination mechanism (the blocker, §4.3.3).** Which of
-   coordinator-process / shared-memory / single-process-daemon does the
-   stock `nix-daemon` adopt for cross-connection dedup/attach? This is the
-   prerequisite for Phase 3, §4.7.4 re-attach, and registry introspection on
-   the stock daemon, and bounds every promise those make. Listed first
-   because it gates the others.
-1. **Replay buffer policy.** Full log vs. head+tail cap, and the
-   truncation-marker UX for very long builds — its *location* is decided by
-   Q0 (process memory vs. coordinator-owned ring buffer).
+0. **Cross-process coordination mechanism (the blocker, §4.3.3).** ✅ **RESOLVED**
+   (spike §2.5 + decisions record
+   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11)).
+   The stock `nix-daemon` adopts a **coordinator process** (the daemon binary in
+   a `--coordinator` role, supervised by the `daemonLoop` parent). This is the
+   prerequisite for Phase 3, §4.7.4 re-attach, and registry introspection on the
+   stock daemon.
+1. **Replay buffer policy.** ✅ **RESOLVED** — *location* by the spike
+   (coordinator memory, §3.5); *cap/UX* by decisions record
+   [O5](./remote-build-protocol-redesign.decisions.md#operational-decision-o5--replay-cap-default-and-truncation-ux-rfc-q1-remainder-spike-6-q4-open-points-17)
+   (byte cap default 4 MiB; ~1 MiB head + ~3 MiB tail with a truncation-marker
+   frame; `replayed=true` tagging; post-build handoff to the persisted log).
 2. **Cancellation across tenants.** ✅ **RESOLVED**
    ([Blocker 2](./remote-build-protocol-redesign.decisions.md#blocker-2--the-refcounted-cancel-matrix-rfc-q2-spike-52)).
    Lifetime = refcount + an explicit build/GC root *only* (no originator
