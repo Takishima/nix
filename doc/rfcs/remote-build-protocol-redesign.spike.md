@@ -770,11 +770,16 @@ charter:
    must not let A's caller read B's content or vice versa. RFC §6 + §10 Q7
    (reuse-key vs. trust) should be specified **together** with the §3.8 merge
    semantics; the spike flags but does not resolve this.
-3. **Coordinator as a `nix-daemon` role vs. sidecar.** The RFC says "a new role
-   of `nix-daemon`, or a sidecar" (§4.3.3.1). The spike leans sidecar-for-
-   prototype but notes the production choice (lifecycle ownership, who starts/
-   reaps it, socket location) is unsettled and interacts with how operators run
-   the daemon.
+3. **Coordinator as a `nix-daemon` role vs. sidecar.** ✅ **RESOLVED**
+   (decisions record,
+   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11)).
+   The coordinator is the **daemon binary in a `--coordinator` role** — a
+   separate process (not a separate codebase, not in-process with the listener),
+   **supervised and reaped by the long-lived `daemonLoop` parent**; one per store
+   at `$NIX_STATE_DIR/coordinator.socket` (mode `0660`, peer-cred-verified), run
+   as root and **one per machine, not per-user**; lazy spawn (§3.1) is retained
+   only as the no-daemon fallback. Whether the coordinator must *survive* a
+   daemon restart is deferred to the crash-recovery posture (§6 Q5).
 
 ---
 
@@ -808,10 +813,14 @@ it is its own RFC, not a spike.
 
 **Open questions that still need a human decision:**
 
-1. **Coordinator deployment model (RFC §4.3.3.1).** A new `nix-daemon` role vs. a
-   sidecar binary: who starts it, who reaps it, where the socket lives, and how it
-   behaves under existing `systemd` / multi-user daemon setups. The spike
-   prototypes a sidecar but does not settle production ownership.
+1. **Coordinator deployment model (RFC §4.3.3.1).** ✅ **RESOLVED** — decisions
+   record
+   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11):
+   daemon binary in a `--coordinator` role, a separate process supervised/reaped
+   by the `daemonLoop` parent, one per store at `$NIX_STATE_DIR/coordinator.socket`
+   (`0660`, peer-cred-verified), run as root and one per machine (not per-user),
+   lazy spawn as the no-daemon fallback. (Daemon-restart survival is deferred to
+   Q5, crash-recovery posture.)
 2. **CA key-merge + trust (RFC §6, Q3, Q7) — §3.8/§5.4.2.** Exact semantics when
    distinct unresolved drvs (with *different* per-caller authorization) resolve to
    the same build key, and whether resolution is a client-side precondition or a

@@ -377,6 +377,135 @@ as frozen.
 
 ---
 
+## Operational decision O1 — Coordinator deployment model (spike §6 Q1, open-points §1.1)
+
+> This is an **operational** decision, not a wire blocker: it concerns *how the
+> coordinator process is deployed, owned, and reaped*, not the public protocol.
+> It builds on the settled coordinator interface (spike §3) and does not reopen
+> it. It changes **no public wire** (the coordinator is below the wire, spike
+> §5.1), so it does **not** gate the Phase 3 / serve-3.0 freeze; it is recorded
+> here so the coordinator can be implemented without a further design round.
+
+### 1. Decision
+
+The coordinator is **the existing daemon binary run in a new `--coordinator`
+role — a separate process, not a separate codebase, and not in-process with the
+listener.** Concretely:
+
+- **Same binary, distinct role.** The coordinator hosts a real `Worker`
+  (build + eval store), `fork()`s builders, and runs the *exact* trust check the
+  `BuildDerivation` handler already enforces (RFC §6; the `daemon.cc` trust
+  comment referenced from `build-remote.cc:324-329`). All of that already lives
+  in the daemon binary, so the coordinator is a **role of that binary**
+  (`nix-daemon --coordinator` / an internal re-exec), never a second codebase
+  that would duplicate the libstore build + trust stack.
+- **A separate process from the listener, supervised by the daemon parent.**
+  The long-lived parent that runs `daemonLoop` (`src/nix/unix/daemon.cc:247`)
+  is already the natural owner: it outlives every connection child, **already
+  installs `SIGCHLD` handling and reaps children** (`serveUnixSocket` + the
+  `waitpid` loop, `daemon.cc:299-321`), and is **already restarted by the
+  service manager on crash** (`daemon.cc:290-296`, `activationName =
+  "nix-daemon.socket"`, `:303`). **Canonical lifecycle: when a daemon parent
+  starts against a store that supports the coordinator capability, it
+  detects-an-existing-or-spawns *one* coordinator, becomes its parent, and reaps
+  it**; the coordinator in turn reaps its own build subprocesses (spike §2.2
+  cleanup row). This makes the spawn-election race (spike §6 Q8) vanish in the
+  common case — only the single parent spawns — and keeps the listener a thin,
+  always-available acceptor that can **respawn a crashed coordinator**, which is
+  what makes the "degrade safely to `PathLocks`" claim (spike §2.2) real.
+- **Lazy spawn is the *fallback only*** — for setups with no central daemon
+  parent (direct multi-process store access, rootless/test harnesses). There the
+  first child that needs the coordinator spawns it using the `bind()`/lock-file
+  election and decline-and-respawn handshakes of spike §3.1, and the spawned
+  coordinator `setsid()`s / double-forks to detach from its transient parent so
+  it outlives the child that started it.
+- **Socket.** One coordinator **per store directory**, at
+  `$NIX_STATE_DIR/coordinator.socket` (e.g. `/nix/var/nix/coordinator.socket` in
+  multi-user), mirroring how the daemon socket is already per-store. Created
+  owner = daemon uid / `nix-daemon` group, mode **`0660`** (stricter than the
+  daemon socket's own `0666` at `daemon.cc:302`, because only daemon children —
+  never end-user clients — ever speak to it), peer-credential-verified per spike
+  §3.7.1. A stale socket from a crashed coordinator is detected on connect and
+  re-created on the next spawn.
+- **Multi-user / systemd.** In the standard NixOS multi-user setup the daemon
+  runs as root under systemd; the coordinator runs **as root too** (it must, to
+  run the `Worker` / sandbox / chown outputs) and is **one per machine (one per
+  store), not per-user** — dedup is deliberately *across* users on the same
+  builder, which is exactly the cross-tenant case the trust model (spike §3.7,
+  Blocker 1) is built for. Per-user isolation is enforced by the per-observable
+  authorization check, **not** by a process boundary. Packagers **MAY**
+  optionally split the coordinator into its own socket-activated unit
+  (`nix-daemon-coordinator.{socket,service}`); the daemon's
+  detect-existing-else-spawn logic makes that a drop-in optimization, not a
+  requirement.
+- **Single-user installs (no daemon) need no coordinator.** With direct local
+  store access there is a single process with a single in-process `Worker`, so
+  dedup is already the native `initGoalIfNeeded` path (spike §1.2). Coordinator
+  presence is therefore gated on "a multi-user daemon exists."
+
+### 2. Rejected alternatives
+
+- **A separate coordinator codebase / standalone binary.** Rejected: it would
+  have to link essentially all of libstore and **duplicate the trust check**,
+  creating a second place where input/build authorization must be kept correct —
+  the opposite of Blocker 1's "one place running the existing trust code."
+- **Run the registry in-process in the listener parent (no separate
+  coordinator process).** Rejected: it couples the *listening socket's*
+  availability to build-execution load, and a `Worker`/scheduling crash would
+  take down the **acceptor** too — so no new connections, and nothing left to
+  respawn state. A separate, parent-supervised coordinator keeps the acceptor
+  thin and lets it restart a crashed coordinator (the safe-degrade floor).
+- **Pure lazy spawn as the canonical model.** Rejected as the default: it makes
+  the spawn-election + idle-exit races (spike §6 Q8) load-bearing on every
+  install and requires fragile reparenting. Kept strictly as the
+  no-supervisor fallback.
+- **Per-user coordinators.** Rejected: per-user processes cannot dedup *across*
+  users — which defeats the feature's purpose on a shared builder — and trust is
+  already handled per-observable (Blocker 1), so a process boundary buys nothing.
+
+### 3. What it commits
+
+- The `--coordinator` **role** of the daemon binary; the daemon parent's
+  **detect-existing-else-spawn + supervise/reap** branch at `daemonLoop`
+  startup; the lazy-spawn fallback path for non-daemon setups.
+- Socket **path** (`$NIX_STATE_DIR/coordinator.socket`, per store), **mode**
+  (`0660`), ownership, and peer-cred verification (spike §3.7.1).
+- **One coordinator per store, as the daemon's uid (root in multi-user), not
+  per-user.** No public-wire surface; nothing here is a back-compat promise.
+
+### 4. Residual risk and the guarding test
+
+- **Risk:** tying coordinator lifetime to the daemon parent means
+  `systemctl restart nix-daemon` tears down in-flight shared builds. Bounded and
+  **intentionally deferred**: whether the coordinator must *survive* a daemon
+  restart (persistent registry + re-adoption of running build subprocesses) is
+  the **crash-recovery posture** still open in spike §6 Q5 / open-points §1.2;
+  the canonical "parent owns it" model degrades to the `PathLocks` floor on
+  restart, which O1 deems acceptable as the baseline.
+- **Risk:** the optional socket-activated-unit packaging path and the
+  parent-spawn path must not both spawn a coordinator. Resolved by the single
+  detect-existing-else-spawn check (the same election as spike §3.1) being the
+  *only* spawn entry point in both modes.
+- **Guarding test:** a functional test that (a) two daemon parents / two
+  children against one store end up with **exactly one** coordinator process and
+  one socket; (b) a connection from a *different* uid to the coordinator socket
+  is refused at the peer-cred check (spike §3.7.1, already in the §4.2 prototype
+  list); (c) killing the coordinator leaves the listener up and a subsequent
+  build **respawns** it and falls back to a correct (`PathLocks`-coalesced)
+  build in the interim.
+
+### 5. Owner + follow-up
+
+- **Owner:** libstore/daemon maintainer (daemon lifecycle / `daemonLoop`), with
+  a **packager/NixOS-module** reviewer for the systemd-unit-split option.
+- **Follow-up:** fold the `--coordinator` role, the parent's spawn/supervise
+  branch, and the `0660` peer-verified socket into the spike's throw-away
+  prototype (spike §4.1, item 1) so deployment is exercised alongside
+  start-or-attach; settle the daemon-restart-survival question with spike §6 Q5
+  (crash-recovery posture) rather than independently.
+
+---
+
 ## Cross-cutting answers (all three blockers)
 
 - **Identical Build Session wire for single-process and stock-daemon backends?**

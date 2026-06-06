@@ -36,7 +36,7 @@ explicitly as open questions.
 
 | # | Open point | Source | Why it matters / what is needed |
 |---|---|---|---|
-| 1.1 | **Coordinator deployment model** — a new `nix-daemon` sub-role vs. a sidecar binary: who starts it, who reaps it, where the socket lives, behaviour under `systemd` / multi-user daemon setups. | spike §5.4.3, §6 Q1 (RFC §4.3.3.1) | Everything downstream of the coordinator (lifecycle, socket security in §3.7.1, lazy-spawn in 1.4) inherits this. The spike prototypes a sidecar but explicitly does not settle production ownership. |
+| 1.1 | ✅ **RESOLVED — Coordinator deployment model.** Daemon binary in a `--coordinator` role; a separate process supervised/reaped by the `daemonLoop` parent (not a separate codebase, not in-process with the listener); one per store at `$NIX_STATE_DIR/coordinator.socket` (`0660`, peer-cred-verified); run as root, one per machine, **not** per-user; lazy spawn as the no-daemon fallback. See decisions record [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11). | spike §6 Q1; RFC §4.3.3.1 | *(Daemon-restart survival deferred to 1.2.)* |
 | 1.2 | **Coordinator crash-recovery posture** — is "degrade safely to today's `PathLocks` behaviour, losing in-flight fan-out" acceptable, or must builds survive a coordinator restart (persistent registry + re-adoption of running build subprocesses)? | spike §6 Q5 (§2.2 cleanup row) | A real robustness/cost decision. The spike argues the safe-degrade floor by inspection only; full supervision/restart is named as productionization, not designed. |
 | 1.3 | **Coordinator throughput / concurrency ceiling** — single event loop vs. sharded/multi-threaded design. Every build and every log frame for every connection funnels through one coordinator (O(frames × subscribers) centrally). | spike §6 Q7; spike-review §2.3 | In direct tension with **G6** (elastic backends), the very scenario the coordinator partly exists to serve. Only a *measurement* is planned (spike §4.2); no decision on the ceiling. |
 | 1.4 | **Lazy-spawn lifecycle posture** — the spawn-election (two children racing to spawn) and the "decline-and-respawn" handshake (idle-exit between connect and first use). Election primitive, idle-exit grace, and spawn-at-daemon-start vs. lazily. | spike §3.1, §6 Q8; spike-review §2.4 | Sketched but not specified. Without it a flaky spawn is misread as a coordination bug. |
@@ -101,8 +101,9 @@ name.
 The operational half of the design (Gaps A/B/C) is decision-complete and ready.
 The dedup/attach half is *architecturally* settled (coordinator process, frozen
 key/auth rule, agreed cancel matrix, chosen serve-3.0 core) but still owes: a
-handful of **deployment/operational decisions** (§1: deployment model,
-crash-recovery, throughput ceiling, lazy-spawn, query privacy, elastic
-advertisement, replay tuning), three **validation prototypes/tests** that gate
+handful of **deployment/operational decisions** (§1; deployment model is now
+decided — O1 — leaving crash-recovery, throughput ceiling, lazy-spawn, query
+privacy, elastic advertisement, replay tuning), three **validation
+prototypes/tests** that gate
 the Phase 3 freeze (§2), and — the long pole — a **named Hydra maintainer and an
 open coordination thread** before serve 3.0 can be frozen (§2.3).

@@ -566,15 +566,24 @@ outlives and is shared across the per-connection children. There are three
 candidate mechanisms, in rough order of increasing scope:
 
 1. **A coordinator process (recommended starting point).** A long-lived
-   per-store coordinator (a new role of `nix-daemon`, or a sidecar) owns the
-   Build Registry, the replay buffers, and the subscriber refcounts. The
-   forked connection children become thin: on a build request a child asks
-   the coordinator to *start-or-attach* a build keyed on the resolved drv,
-   then relays the coordinator's log frames down its own socket and
-   forwards cancellation/disconnect. The coordinator runs the actual
+   per-store coordinator owns the Build Registry, the replay buffers, and the
+   subscriber refcounts. The forked connection children become thin: on a build
+   request a child asks the coordinator to *start-or-attach* a build keyed on
+   the resolved drv, then relays the coordinator's log frames down its own
+   socket and forwards cancellation/disconnect. The coordinator runs the actual
    `Worker`. This keeps the wire protocol changes (Build Sessions, §4.1)
    the same for both backend classes and confines the new complexity to one
    process. It is also the natural home for `QueryActiveBuilds`.
+   **Its deployment is now decided** *(decisions record,
+   [O1](./remote-build-protocol-redesign.decisions.md#operational-decision-o1--coordinator-deployment-model-spike-6-q1-open-points-11))*:
+   the coordinator is the **daemon binary in a `--coordinator` role** (a separate
+   process, not a separate codebase, and not in-process with the listener),
+   **supervised and reaped by the long-lived `daemonLoop` parent** that already
+   reaps children and is itself restarted by systemd (`daemon.cc:247,299-321`);
+   one per store, at `$NIX_STATE_DIR/coordinator.socket` (mode `0660`,
+   peer-cred-verified); one per machine and run as root, **not** per-user (dedup
+   is deliberately cross-user); lazy spawn is the fallback only for non-daemon
+   setups.
 2. **Shared memory + a published log ring buffer**, keyed on the resolved
    drv, with the building child as writer and attaching children as
    readers, plus a small shared registry/refcount table. Avoids a new
