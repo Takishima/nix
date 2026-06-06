@@ -833,11 +833,14 @@ it is its own RFC, not a spike.
 4. **Replay cap default and truncation UX (RFC Q1) — §3.5.** The *location* is
    decided (coordinator memory); the concrete byte cap and the head+tail
    truncation-marker presentation for very long builds is a tuning/UX call.
-5. **Coordinator crash-recovery posture.** The spike argues coordinator death
-   degrades *safely* to today's `PathLocks` behaviour; whether that is acceptable
-   for production or whether builds must survive a coordinator restart (persistent
-   registry, re-adoption of running build subprocesses) is a robustness decision
-   with real cost.
+5. **Coordinator crash-recovery posture.** ✅ **RESOLVED** — decisions record
+   [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5-open-points-12):
+   **v1 is safe-degrade, no persistence/re-adoption.** Builders are forked
+   `dieWithParent`/in a coordinator-killable cgroup so a crash releases their
+   `PathLocks`; relay children fall back to building locally (coalescing via
+   `PathLocks`); correctness is guaranteed by the existing lock/validity logic
+   (the spike's §2.2 floor). Persistent registry + re-adoption is deferred as a
+   separate, evidence-gated hardening item, **not** a Phase 3 prerequisite.
 6. **`QueryActiveBuilds` default privacy for untrusted callers (RFC Q5).**
    Aggregate count vs. nothing — a policy choice the coordinator enforces but the
    project must set.

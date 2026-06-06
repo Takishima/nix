@@ -583,7 +583,13 @@ candidate mechanisms, in rough order of increasing scope:
    one per store, at `$NIX_STATE_DIR/coordinator.socket` (mode `0660`,
    peer-cred-verified); one per machine and run as root, **not** per-user (dedup
    is deliberately cross-user); lazy spawn is the fallback only for non-daemon
-   setups.
+   setups. **Crash-recovery posture is also decided** *(decisions record,
+   [O2](./remote-build-protocol-redesign.decisions.md#operational-decision-o2--coordinator-crash-recovery-posture-spike-6-q5-open-points-12))*:
+   v1 is safe-degrade — builders are forked so they die with the coordinator
+   (releasing their output `PathLocks`), clients fall back to building locally,
+   and the existing lock/validity logic guarantees no corruption or
+   double-build; a persistent registry that lets builds survive a restart is
+   deferred as evidence-gated hardening.
 2. **Shared memory + a published log ring buffer**, keyed on the resolved
    drv, with the building child as writer and attaching children as
    readers, plus a small shared registry/refcount table. Avoids a new

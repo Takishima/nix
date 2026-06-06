@@ -477,11 +477,12 @@ listener.** Concretely:
 
 - **Risk:** tying coordinator lifetime to the daemon parent means
   `systemctl restart nix-daemon` tears down in-flight shared builds. Bounded and
-  **intentionally deferred**: whether the coordinator must *survive* a daemon
-  restart (persistent registry + re-adoption of running build subprocesses) is
-  the **crash-recovery posture** still open in spike §6 Q5 / open-points §1.2;
-  the canonical "parent owns it" model degrades to the `PathLocks` floor on
-  restart, which O1 deems acceptable as the baseline.
+  **intentionally deferred to O2**: whether the coordinator must *survive* a
+  daemon restart (persistent registry + re-adoption of running build
+  subprocesses) is the **crash-recovery posture**, now decided in **O2**
+  (safe-degrade, no persistence/re-adoption in v1) — the canonical "parent owns
+  it" model degrades to the `PathLocks` floor on restart, which O1/O2 deem
+  acceptable as the baseline.
 - **Risk:** the optional socket-activated-unit packaging path and the
   parent-spawn path must not both spawn a coordinator. Resolved by the single
   detect-existing-else-spawn check (the same election as spike §3.1) being the
@@ -501,8 +502,106 @@ listener.** Concretely:
 - **Follow-up:** fold the `--coordinator` role, the parent's spawn/supervise
   branch, and the `0660` peer-verified socket into the spike's throw-away
   prototype (spike §4.1, item 1) so deployment is exercised alongside
-  start-or-attach; settle the daemon-restart-survival question with spike §6 Q5
-  (crash-recovery posture) rather than independently.
+  start-or-attach; the daemon-restart-survival question is settled in **O2**
+  (crash-recovery posture).
+
+---
+
+## Operational decision O2 — Coordinator crash-recovery posture (spike §6 Q5, open-points §1.2)
+
+> Like O1, an **operational** decision with **no public-wire** surface, so it
+> does not gate the Phase 3 / serve-3.0 freeze. It answers the question O1
+> explicitly deferred ("must builds survive a coordinator/daemon restart?").
+
+### 1. Decision
+
+**v1 is safe-degrade: the coordinator keeps no cross-restart state, and a
+coordinator (or daemon-parent) restart tears down in-flight *shared* builds —
+correctly, never corruptly — falling back to today's `PathLocks` floor.** No
+persistent registry and no re-adoption of running builders in the first
+implementation. Concretely:
+
+- **State is in-memory only.** The registry, replay buffers (already
+  coordinator memory, spike §3.5), refcounts, and persisted-log writers do not
+  survive a coordinator exit. A respawned coordinator (the `daemonLoop` parent
+  respawns it per O1) starts empty; `QueryActiveBuilds` returns nothing until new
+  builds register.
+- **Builds share the coordinator's fate.** The coordinator `fork()`s builders
+  with **`dieWithParent`** (`PR_SET_PDEATHSIG, SIGKILL`,
+  `src/libutil/unix/processes.cc:248`) and/or in a coordinator-owned cgroup it
+  can `cgroup.kill` (`src/libutil/linux/cgroup.cc:91`,
+  `linux-derivation-builder.cc:324,786`). So a coordinator crash **kills its
+  in-flight builds and releases their output `PathLocks`** — no orphan keeps a
+  lock held or keeps writing into a now-dead log pipe (which would only earn an
+  `EPIPE` and waste/wedge work).
+- **Clients fall back to building locally, not to an error.** The connection
+  relay child, on seeing its control socket to the coordinator close (EOF),
+  takes the **same in-process build path O1 defines as the no-coordinator
+  fallback** (spike §5.1, §1.1). If several attached clients fall back at once,
+  their re-runs **coalesce on the output `PathLocks`** (spike §1.3) — exactly one
+  rebuild happens, not N. The client loses live fan-out for that build but still
+  gets a correct `BuildResult`.
+- **Correctness is guaranteed by the existing lock/validity logic** (spike §2.2):
+  a restarted coordinator plus output `PathLocks` and output-validity checks
+  **never double-builds or corrupts**; the worst case is strictly today's
+  behaviour (work coalesced by locks, no fan-out) until the build finishes.
+
+This makes O1's deferred "daemon-restart survival" question answered as **no, not
+in v1** — and bounds the cost of that answer to *recomputing* an in-flight build,
+never to incorrectness.
+
+### 2. Rejected alternatives
+
+- **Persistent registry + re-adoption of running build subprocesses.** Rejected
+  *for v1*, deferred as evidence-gated future hardening (see §5). It requires
+  builders to **outlive** the coordinator (the opposite of the `dieWithParent`
+  rule above), reintroducing the orphan-lifecycle, pid-reuse, and stale-handle
+  bookkeeping the spike rejected M2 (shared memory) for (spike §2.3), plus a
+  re-attachable handle to a running builder's live log stream. That is a large
+  mechanism for a **rare** event (the coordinator is small and supervisory by
+  O1/M1 design) — poor ROI until crashes are shown to matter operationally.
+- **Leave builds running orphaned after coordinator death (no death signal).**
+  Rejected: an orphan holds output `PathLocks` and writes log frames into a dead
+  pipe (`EPIPE`), so it wedges/wastes work that nobody can collect a
+  `BuildResult` from — worse than killing and letting `PathLocks`-coalesced
+  re-run reclaim it.
+- **Error attached clients when the coordinator dies.** Rejected: the local-build
+  fallback already exists (O1) and is strictly better — the client still gets its
+  output instead of a spurious failure.
+
+### 3. What it commits
+
+- Coordinator state is **in-memory, not persisted**, in v1.
+- Builders are forked **`dieWithParent`** / in a coordinator-killable cgroup, so
+  a coordinator crash reliably releases their `PathLocks`.
+- The relay child's **control-socket-EOF → build-locally** fallback (the same
+  branch as "no coordinator present").
+- No public-wire surface; nothing here is a back-compat promise.
+
+### 4. Residual risk and the guarding test
+
+- **Risk:** a long build (LLVM/kernel) in flight at crash time is discarded and
+  recomputed. Bounded by crash rarity; if it proves painful, that is the trigger
+  to build the deferred re-adoption path (§5), not to block v1 on it.
+- **Risk:** "thundering reconnect" — many attached clients fall back at once.
+  Bounded: output `PathLocks` serialize them into **exactly one** rebuild.
+- **Guarding test:** kill the coordinator mid-build with two clients attached and
+  assert (a) no partial/corrupt output is ever observed as valid; (b) both
+  clients still get a correct **successful** build via local fallback, with
+  **exactly one** rebuild (marker/counter); (c) **no builder process survives**
+  the coordinator (the `dieWithParent`/cgroup tie); (d) the daemon parent
+  **respawns** a coordinator for a subsequent independent build.
+
+### 5. Owner + follow-up
+
+- **Owner:** libstore/daemon maintainer (build/`Worker` lifetime + daemon
+  process model).
+- **Follow-up:** implement the `dieWithParent`/cgroup tie and the relay
+  EOF→local-fallback in the spike prototype (spike §4.1) so crash-degrade is
+  exercised, and the §4 guarding test added; file **persistent registry +
+  re-adoption** as a *separate, evidence-gated* hardening item (its own small RFC
+  if/when coordinator-crash frequency justifies it), explicitly **not** a Phase 3
+  prerequisite.
 
 ---
 
