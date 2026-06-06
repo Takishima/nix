@@ -2,10 +2,11 @@
 
 | | |
 |------------------|------------------------------------------------|
-| **Status**       | Execution plan — consolidates the "decided but not yet validated" work |
+| **Status**       | Prototypes landed — engineering validation discharged for A/B/C/D; remaining gates are external (Hydra) + a release-cycle soak |
 | **Parent**       | [`remote-build-protocol-redesign.md`](./remote-build-protocol-redesign.md) |
 | **Decisions**    | [`*.decisions.md`](./remote-build-protocol-redesign.decisions.md) (Blockers 1–3, O1–O7) |
 | **Spike**        | [`*.spike.md`](./remote-build-protocol-redesign.spike.md) (§4 prototype) |
+| **Prototypes**   | [`prototypes/workstream-a-coordinator/`](./prototypes/workstream-a-coordinator/) (A+B+C) · [`prototypes/workstream-d-serve30/`](./prototypes/workstream-d-serve30/) (D) |
 
 > Every *design* question is decided (Blockers 1–3, O1–O7). What remains is
 > **execution, not clarification**: prototypes, tests, and one external
@@ -14,6 +15,24 @@
 > spike's §4 prototype plan, and RFC §9, into one **sequenced, checklist-driven**
 > plan so each item has a concrete deliverable, acceptance criteria, file touch
 > points, and an owner. It is the answer to "how do we *finish* Tier 2."
+
+> **Prototype status (2026-06).** The throw-away validation prototypes the plan
+> calls for now exist and **all their suites pass** (`make check` / `check-b` /
+> `check-c` for A/B/C; `make check` for D). That discharges the *engineering*
+> validation behind every workstream and lets us **resolve the freezes
+> accordingly** — but only as far as code can: see the verdict below and the
+> checked boxes in the readiness section.
+>
+> | Freeze | Verdict | What still gates it |
+> |---|---|---|
+> | **F-INT** | ✅ **Freezable now** — no remaining gate | — (the §3 internal coordinator interface is fully validated by Workstream A; productionizing it in `libstore`/`daemon` is Phase 3 *implementation*, not a freeze gate) |
+> | **F-WIRE** | ⏳ **Nix-side cleared**, freeze still blocked | the **Hydra field set** for the public Build Session additions (RFC §7 / Q4) — external; T1–T3 (B) and C-a…C-f (C) are green |
+> | **F-SERVE30** | ⏳ **Layout + back-compat proven**, freeze still blocked | **D3.1** named-maintainer sign-off, **D3.2** queue-runner branch, **D3.4** ≥1-cycle soak — all external/time-gated; D1/D2/D3.3 proven in-prototype (D3.3 still owes a port into `libstore-tests`) |
+>
+> The honest one-liner: **F-INT resolves now; F-WIRE and F-SERVE30 have their
+> engineering preconditions discharged but cannot freeze until Hydra coordinates
+> and (for serve 3.0) the field set soaks** — exactly the external long pole D4
+> exists to start.
 
 ## 0. The three freezes this plan gates (and why they are distinct)
 
@@ -75,6 +94,15 @@ fork-per-connection daemon*):
 `resolving` (→ Workstream B), session re-attach, full crash-recovery
 productionization, serve bridge.
 
+> **Prototype: ✅ done.** [`prototypes/workstream-a-coordinator/`](./prototypes/workstream-a-coordinator/)
+> (`coordinator.cc`/`reldaemon.cc`/`slow-builder.sh` = A1/A2/A3). `make check`
+> runs all criteria green on a real `fork()`-per-connection daemon model:
+> A-dedup, A-replay, A-backpressure, A-sockauth (real `SO_PEERCRED`), A-crash
+> (real `PR_SET_PDEATHSIG`), A-spawn all PASS; A-throughput **measured**
+> (single-threaded coordinator ≈0.09 CPU-s across 32 builds × 4 subscribers —
+> well under any ceiling that would force the O4 sharding). **F-INT is
+> freezable.**
+
 ---
 
 ## Workstream B — Trust validation under CA key-merge  → gates **F-WIRE**  [Blocker 1]
@@ -102,6 +130,16 @@ The **one remaining unproven mechanism** (decisions B1 §5): the CA
 **Owner:** security reviewer + libstore/protocol (joint). **Gate:** T1–T3 green
 **before any F-WIRE freeze.**
 
+> **Prototype: ✅ done.** Extends the A1 coordinator (`promote()`/
+> `checkPromotions()`, spike §3.8). `make check-b` is green: **T1** (existence
+> oracle — byte-identical denials, |Δmedian| ≈ 11 µs ≪ 500 µs threshold,
+> authorize-before-registry), **T2** (CA-merge re-auth — unauthorized peer
+> detached at promotion, observes none of the authorized peer's log, one build
+> on the resolved key), **T3** (asserted-key spoof rejected; coordinator
+> recomputes the key), plus the `b-resolve` happy-path race. The F-WIRE
+> *precondition* is met; the freeze itself still waits on the RFC §7 Hydra
+> field set.
+
 ---
 
 ## Workstream C — Refcounted-cancel implementation  → coordinator-internal (no wire)  [Blocker 2]
@@ -127,6 +165,14 @@ table must be implemented and tested before Phase 3 *implementation* is trusted.
 | C-f | active-cancel by one of two | canceller gets local interrupt; other completes |
 
 **Owner:** libstore/protocol (build scheduling / `Worker` lifetime).
+
+> **Prototype: ✅ done.** `C1` lives in the same coordinator
+> (`hasRootReasonToContinue()` = explicit-root-only; `checkDeadlines()` /
+> `maybeFinalize()` / `onUnsubscribe()`). `make check-c` is green across the
+> full matrix C-a…C-f (no originator privilege; per-subscriber `TimedOut`
+> detach under the max envelope; `--keep-failed` logical OR; scoped cancel).
+> No wire change, so no freeze gated — but the table is now proven ahead of
+> Phase 3 implementation.
 
 ---
 
@@ -171,6 +217,19 @@ are the gate to bumping `SERVE_PROTOCOL_VERSION`.
 **Owner:** Hydra queue-runner maintainer (sign-off) + libstore/serve-protocol
 maintainer (serializer + version bump).
 
+> **Prototype: ✅ D1/D2 done; D3.3 proven standalone.**
+> [`prototypes/workstream-d-serve30/`](./prototypes/workstream-d-serve30/)
+> mirrors the `serve-protocol.cc` version-gated ladder and appends the frozen
+> 3.0 diagnostic core under a `>= {3,0}` guard. `make check` is green across 21
+> golden/characterisation tests: round-trip at 2.3/2.6/2.8/3.0, exact golden
+> bytes, additive layout, **2.8-reads-3.0-bytes**, negotiated-down emits no
+> tail, the back-compat matrix **both directions**, `QueryBuildLog` round-trip
+> (`nix log` over serve), and the deferred `builderId`/`deduplicated` staying
+> behind the unstable gate. This *is* D3.3's proof, but standalone — the literal
+> checklist item still owes a port into `src/libstore-tests`. **D3.1, D3.2, and
+> D3.4 are external/time gates no prototype can close** — they are why D4 (the
+> Hydra thread) is the long pole. `SERVE_PROTOCOL_VERSION` stays unbumped.
+
 ---
 
 ## Sequencing (what unblocks what)
@@ -194,20 +253,29 @@ Workstream D:  D1+D2 (now, behind unstable) ──► D3.1…D3.4 + D4 ──►
 
 ## Readiness checklists (copy-paste gates)
 
-**Freeze F-INT (Phase 3 internal interface):**
-- [ ] A1, A2, A3 built; A-dedup, A-replay, A-backpressure, A-sockauth, A-crash,
-  A-spawn all green; A-throughput measured and within (or escalated against) the
-  provisional ceiling.
+**Freeze F-INT (Phase 3 internal interface):** ✅ **all gates met — freezable.**
+- [x] A1, A2, A3 built; A-dedup, A-replay, A-backpressure, A-sockauth, A-crash,
+  A-spawn all green; A-throughput measured and within the provisional ceiling
+  (no escalation needed). *(Workstream A prototype, `make check`.)*
 
-**Freeze F-WIRE (Phase 3 public Build Session surface):**
-- [ ] F-INT done; **T1, T2, T3** green (Workstream B); **C1 + the
-  `build-dedup-cancel` matrix (C-a…C-f)** green (Workstream C); Hydra field set
-  for the public Build Session additions agreed (RFC §7).
+**Freeze F-WIRE (Phase 3 public Build Session surface):** ⏳ Nix-side cleared;
+blocked on the external Hydra field set.
+- [x] F-INT done.
+- [x] **T1, T2, T3** green (Workstream B prototype, `make check-b`).
+- [x] **C1 + the `build-dedup-cancel` matrix (C-a…C-f)** green (Workstream C
+  prototype, `make check-c`).
+- [ ] Hydra field set for the public Build Session additions agreed (RFC §7) —
+  **external; the one remaining F-WIRE gate.**
 
-**Bump `SERVE_PROTOCOL_VERSION` → `(3<<8|0)` (F-SERVE30):**
-- [ ] D1 implemented behind unstable; D2 golden/characterisation tests green;
-  **D3.1 (named maintainer sign-off), D3.2 (queue-runner branch), D3.3 (golden
-  back-compat both ways), D3.4 (≥1-cycle soak)** all checked.
+**Bump `SERVE_PROTOCOL_VERSION` → `(3<<8|0)` (F-SERVE30):** ⏳ layout + back-compat
+proven; blocked on external sign-off + soak.
+- [x] D1 implemented behind unstable (modelled); D2 golden/characterisation
+  tests green (Workstream D prototype, `make check`).
+- [x] **D3.3** (golden back-compat both ways) — proven standalone; *owes a port
+  into `src/libstore-tests`* to close the literal item.
+- [ ] **D3.1** (named maintainer sign-off) — external.
+- [ ] **D3.2** (queue-runner branch) — external.
+- [ ] **D3.4** (≥1-cycle soak on the unstable version) — time-gated.
 
 ## Owners at a glance
 
