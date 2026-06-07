@@ -147,22 +147,31 @@ rewrite. The normative seams (RFC §4.3.5, §8.1) the registry component bakes i
   feature** (the planned contraction's first half), with the socket at
   `$stateDir/coordinator.socket` (O1, `NIX_BUILD_COORDINATOR_SOCKET` override).
   Hardened against an oversized-record allocation DoS on the control socket.
-- **Functional verification** — `build-dedup-coordinator.sh`: two concurrent
-  `ssh-ng://localhost` builds of the same resolved derivation coalesce to **one**
-  build (both clients observe the same builder-process token), the late joiner
-  receiving the pre-attach log via **replay**. `build-dedup-cancel.sh`: the
-  refcounted-cancel case C-a — the originator is killed while a joiner remains,
-  and the build **continues** to the joiner's completion (no originator
-  privilege, Blocker 2).
+- **General goal-level relay** (`build/derivation-building-goal.cc`) — the
+  coordinator hook now lives in `DerivationBuildingGoal::tryToBuild`, the single
+  point every resolved-derivation build funnels through, so **top-level
+  `ssh-ng://` builds (`BuildPaths`/`BuildPathsWithResults`) dedup too**, not only
+  hook-offloaded `BuildDerivation`s. It branches *before* output-lock
+  acquisition (the coordinator's child owns the lock floor), only when the goal
+  would otherwise build *locally* (so hook offloads still go to the hook), with a
+  `NIX_BUILD_COORDINATOR_INNER` recursion guard for the coordinator's own child.
+- **Functional verification** — `build-dedup-coordinator.sh` (hook →
+  `BuildDerivation`) and `build-dedup-toplevel.sh` (`nix build --store
+  ssh-ng://`, the goal path): two concurrent builds of the same resolved
+  derivation coalesce to **one** build (both clients observe the same
+  builder-process token), the late joiner receiving the pre-attach log via
+  **replay**. `build-dedup-cancel.sh`: the refcounted-cancel case C-a — the
+  originator is killed while a joiner remains, and the build **continues** to the
+  joiner's completion (no originator privilege, Blocker 2).
 
 ## 6. Deferred (evidence-/design-gated, not on the critical path)
 
+- **Make the goal-level relay event-loop-driven** (model `buildWithHook` with
+  `co_await WaitForChildEvent`) instead of a blocking call, so a multi-build
+  `Worker` relays builds concurrently rather than serially.
 - **Finish the contraction**: the daemon `--coordinator` supervised role (O1)
-  and collapsing the duplicated direct-build branch once the coordinator is the
-  proven default.
-- **Broaden the relay** beyond `BuildDerivation` to `BuildPaths` /
-  `BuildPathsWithResults` (resolve each derived path to its key) so top-level
-  `ssh-ng://` builds dedup too, not only hook-offloaded ones.
+  and collapsing the now-redundant `daemon.cc` `BuildDerivation` op branch (the
+  goal-level relay subsumes it).
 - **Cross-user trust hardening (Blocker 1)**: the coordinator should recompute
   the build key from the received drv (T3) and re-authorize every subscriber
   against the resolved key via a real `BuildAuthPolicy` (replacing `AllowAll`),

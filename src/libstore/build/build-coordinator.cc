@@ -262,6 +262,9 @@ struct Coordinator
                 pipe.readSide.close();
                 int wfd = pipe.writeSide.get();
                 try {
+                    // Recursion guard: this build must run locally, not relay
+                    // back to the coordinator (the goal checks this env var).
+                    setenv("NIX_BUILD_COORDINATOR_INNER", "1", 1);
                     auto store = openStore(storeUri);
                     logger = new FramingLogger(wfd); // child's ambient logger (leaked; child _exits)
                     auto res = store->buildDerivation(drvPath, drv, buildMode);
