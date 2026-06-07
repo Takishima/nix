@@ -102,6 +102,7 @@ struct Build
     std::string counterFile; uint32_t nLines = 0; uint32_t sleepMs = 0;
     // Workstream C / Blocker 2:
     uint32_t failAt = 0;        // builder fails at this line (C-e)
+    uint32_t failCode = 0;      // exit code at failAt (0 -> builder default 1); 137 = OOM (R-class)
     bool keepFailedOR = false;  // --keep-failed is a logical OR across subscribers
     bool timedOutCancel = false;// cancelled because every subscriber's deadline elapsed
     std::string workdir;        // stand-in for the failed build dir (kept iff keepFailedOR)
@@ -330,6 +331,7 @@ private:
         uint32_t timeoutMs = r.u32();
         bool keepFailed = r.u8() != 0;
         uint32_t failAt = r.u32();
+        uint32_t failCode = r.u32();
 
         // The drv material the caller is authorized against *at attach time*:
         // the unresolved drv for CA (the resolved key is not known yet), the drv
@@ -368,7 +370,7 @@ private:
             nb->key = regKey;
             nb->explicitRoot = explicitRoot;
             nb->counterFile = counterFile; nb->nLines = nLines; nb->sleepMs = sleepMs;
-            nb->failAt = failAt; nb->keepFailedOR = keepFailed;
+            nb->failAt = failAt; nb->failCode = failCode; nb->keepFailedOR = keepFailed;
             nb->resolvedDrv = resolvedDrv;
             nb->authMaterial = ca ? resolvedDrv : drvForBuild;
             b = nb.get();
@@ -428,6 +430,7 @@ private:
                    std::to_string(b.nLines).c_str(),
                    std::to_string(b.sleepMs).c_str(),
                    std::to_string(b.failAt).c_str(),
+                   std::to_string(b.failCode).c_str(),
                    (char *) nullptr);
             std::fprintf(stderr, "exec builder failed: %s\n", strerror(errno));
             _exit(127);
@@ -646,11 +649,28 @@ private:
         }
     }
 
-    void sendBuildResult(Conn & c, ResultStatus st, int code, const std::string & logRef)
+    void sendBuildResult(Conn & c, ResultStatus st, int code, const std::string & logRef,
+                         FailClass fc = FailClass::None, const std::string & resourceHint = "")
     {
         BufWriter w; w.u8(uint8_t(Msg::BuildResult));
         w.u8(uint8_t(st)); w.u32(uint32_t(code)); w.u8(c.deduplicated ? 1 : 0); w.str(logRef);
+        w.u8(uint8_t(fc)); w.str(resourceHint);
         enqueue(c, frame(w.buf));
+    }
+
+    // RFC §4.4 / §4.7.5: classify a failed builder's exit so the scheduler can
+    // tell a build-intrinsic failure (cacheable) from a builder-internal/transient
+    // one (retryable, right-sized by a resource hint). A normal non-zero exit
+    // (1..127) is a build error; >= 128 means the builder was killed out-of-band
+    // (137 = 128+SIGKILL, the OOM-killer's signature) — transient, and for the OOM
+    // case we attach a `memory` resource hint so the retry can be right-sized.
+    static FailClass classify(int code, std::string & resourceHintOut)
+    {
+        if (code >= 128) {
+            if (code == 137) resourceHintOut = "memory";   // OOM-killed
+            return FailClass::Transient;
+        }
+        return FailClass::BuildError;
     }
 
     void maybeFinalize(Build & b)
@@ -659,6 +679,15 @@ private:
         bool ok = !b.cancelled && WIFEXITED(b.exitStatus) && WEXITSTATUS(b.exitStatus) == 0;
         int code = WIFEXITED(b.exitStatus) ? WEXITSTATUS(b.exitStatus) : -1;
         ResultStatus st = ok ? ResultStatus::Success : ResultStatus::Failure;
+
+        // RFC §4.4: classify a genuine build failure (not a cancel). The result
+        // is reported but, per §3.3, the registry entry is erased below either
+        // way — so a transient failure is never cached/reused (no key poisoning):
+        // the next START_OR_ATTACH on this key is a fresh build, which is exactly
+        // what the R-class test asserts.
+        FailClass fc = FailClass::None;
+        std::string resourceHint;
+        if (!ok && !b.cancelled) fc = classify(code, resourceHint);
 
         // Blocker 2 §3: keep the failed build dir iff it was a genuine build
         // failure (not a cancel) AND ≥1 attached subscriber asked (--keep-failed
@@ -672,7 +701,7 @@ private:
         for (int fd : b.subscribers) {
             auto it = conns.find(fd);
             if (it == conns.end()) continue;
-            sendBuildResult(*it->second, st, code, b.logRef);
+            sendBuildResult(*it->second, st, code, b.logRef, fc, resourceHint);
             sendAttachState(*it->second, AState::Finished);
             it->second->subscribed = false; it->second->started = false;  // no post-finalize timeout
         }

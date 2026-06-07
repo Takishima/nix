@@ -91,6 +91,12 @@ itself — they are the point of the workstream's external dependency:
   new-Nix builder.
 - **D3.3** — these golden tests, ported into `src/libstore-tests`, prove the
   back-compat matrix both ways. (This prototype is exactly that proof, standalone.)
+  **Done:** ported to `src/libstore-tests/serve-diag-core.cc` (9 gtest cases
+  mirroring `tests.cc`), a self-contained characterisation of the candidate 2.9
+  layout that pins `SERVE_PROTOCOL_VERSION == (2<<8|8)` via `static_assert` so it
+  guards the layout in CI during the soak without touching the production
+  serializer. At freeze the goldens retarget the real serializer and this model
+  is deleted.
 - **D3.4** — the field set soaks on the **unstable** version for ≥1 release cycle
   with no layout change.
 

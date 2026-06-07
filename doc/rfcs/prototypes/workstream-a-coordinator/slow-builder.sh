@@ -12,9 +12,11 @@
 #                    builder still advancing even while a client is stalled
 #                    (A-backpressure) or cancelled partway (refcount cancel).
 #
-# Args: COUNTER  KEY  NLINES  SLEEP_MS  [FAIL_AT]
+# Args: COUNTER  KEY  NLINES  SLEEP_MS  [FAIL_AT]  [FAIL_CODE]
 # FAIL_AT > 0 makes the builder exit non-zero at that line (for the C-e
-# keep-failed case); 0/absent means it always succeeds.
+# keep-failed case); 0/absent means it always succeeds. FAIL_CODE is the exit
+# code used at FAIL_AT (default 1 = a build-intrinsic error; 137 models an
+# OOM/builder-internal transient failure for the R-class test).
 set -eu
 
 COUNTER="$1"
@@ -22,6 +24,10 @@ KEY="$2"
 NLINES="${3:-6}"
 SLEEP_MS="${4:-300}"
 FAIL_AT="${5:-0}"
+FAIL_CODE="${6:-1}"
+# A fail point must exit non-zero; treat an unset/0 code as the default 1 (a
+# build-intrinsic error). Callers pass 137 etc. to model a transient failure.
+[ "$FAIL_CODE" -eq 0 ] && FAIL_CODE=1
 
 # Atomically bump the build counter (proof that exactly one build ran).
 # A trivial lock via mkdir keeps concurrent increments correct.
@@ -40,8 +46,8 @@ while [ "$i" -le "$NLINES" ]; do
     echo "marker line $i/$NLINES key=$KEY"
     printf '%s' "$i" > "${COUNTER}.progress"
     if [ "$FAIL_AT" -gt 0 ] && [ "$i" -ge "$FAIL_AT" ]; then
-        echo "=== build FAILED key=$KEY at line $i ==="
-        exit 1
+        echo "=== build FAILED key=$KEY at line $i (exit $FAIL_CODE) ==="
+        exit "$FAIL_CODE"
     fi
     # sub-second sleep so a second client reliably attaches mid-build
     if [ "$SLEEP_MS" -gt 0 ]; then

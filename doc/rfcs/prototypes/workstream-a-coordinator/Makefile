@@ -39,9 +39,15 @@ check-c: all
 	chmod +x slow-builder.sh tests/*.sh
 	tests/run-c.sh
 
-check-all: check check-b check-c
+# Forward-compat / elastic-backend inventory tests (R-class, M-arch). Gate no
+# freeze; exercise Phase-3 coordinator semantics (RFC §4.4, §4.7).
+check-fwd: all
+	chmod +x slow-builder.sh tests/*.sh
+	tests/run-fwd.sh
+
+check-all: check check-b check-c check-fwd
 
 clean:
 	rm -f $(BINS)
 
-.PHONY: all check check-b check-c check-all clean
+.PHONY: all check check-b check-c check-fwd check-all clean

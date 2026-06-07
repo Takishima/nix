@@ -78,7 +78,8 @@ make            # builds coordinator, reldaemon, client, ctl  (needs g++/clang++
 make check      # Workstream A acceptance-criteria harness
 make check-b    # Workstream B trust tests (T1-T3), extends A1
 make check-c    # Workstream C refcounted-cancel matrix (C-a..C-f)
-make check-all  # all three
+make check-fwd  # forward-compat inventory tests (R-class, M-arch) — gate no freeze
+make check-all  # all four
 WSA_DEBUG=1 ./reldaemon /tmp/wsa &                 # manual: start a daemon
 ./client --state /tmp/wsa -k demo -t 1             # manual: input-addressed build
 ./client --state /tmp/wsa --ca -U ca:u -V ca:r -M 500 -t 1   # manual: CA build
@@ -151,6 +152,28 @@ only**, no originator privilege; timeout = **per-subscriber detach under a max
 envelope** (strictest-wins rejected as a cross-tenant DoS); `--keep-failed` =
 **logical OR**; cancel = **scoped unsubscribe-with-error**, no new wire status
 (`TimedOut` is modelled as a per-subscriber result, the build is unaffected).
+
+## Forward-compat inventory tests — R-class, M-arch (gate no freeze)
+
+`make check-fwd` runs two of the RFC's elastic-backend inventory tests
+(validation.md "Forward-compatibility & elastic-backend additions"). They are
+here, in the throw-away prototype, **on purpose**: both exercise Phase-3
+*coordinator* semantics (failure classification + retry sizing; the build-key
+definition) that have no production code yet, and the §4.4 classification fields
+ride the **deferred** serve set — so a `tests/functional` / `src/libstore-tests`
+test would have nothing real to drive. They gate **no** freeze.
+
+| ID | Scenario | Asserts |
+|---|---|---|
+| **R-class** (`tests/r-class.sh`) | builder-internal failure (OOM, exit 137) vs. build-intrinsic failure (exit 1) | OOM → `class=transient` + `hint=memory`; exit 1 → `class=build-error` (distinct, no hint); a re-run of the transiently-failed key starts a **fresh** build (`DEDUP=0`, counter advances) — the failure is **not cached / no key poisoning** (RFC §4.4 / §4.7.5) |
+| **M-arch** (`tests/m-arch.sh`) | same package for `x86_64-linux` vs `aarch64-linux`, concurrent on one endpoint | **two distinct keys → two builds, never coalesced**; each client sees only its own system's log; an identical-key **positive control** *does* coalesce to one build (proving distinctness is about the key, not timing) (RFC §4.7; guardrail §8.1 #1) |
+
+To model the deferred failure-classification fields, the client-facing result
+record (`CRec::Result`, the public-wire stand-in) carries a `FailClass` +
+`resourceHint` — kept **off** the frozen serve 2.9 diagnostic core, next to
+`deduplicated`, exactly as decisions Blocker 3 specifies for the deferred set.
+The builder (`slow-builder.sh`) gained an optional exit-code argument so a test
+can request exit 137 (OOM) vs the default exit 1.
 
 ## Which decisions this bakes in (and validates)
 

@@ -27,7 +27,7 @@
 > |---|---|---|
 > | **F-INT** | ✅ **Freezable now** — no remaining gate | — (the §3 internal coordinator interface is fully validated by Workstream A; productionizing it in `libstore`/`daemon` is Phase 3 *implementation*, not a freeze gate) |
 > | **F-WIRE** | ⏳ **Nix-side cleared**, freeze still blocked | the **Hydra field set** for the public Build Session additions (RFC §7 / Q4) — external; T1–T3 (B) and C-a…C-f (C) are green |
-> | **F-SERVE-DIAG** | ⏳ **Layout + back-compat proven**, freeze still blocked | **D3.1** named-maintainer sign-off, **D3.2** queue-runner branch, **D3.4** ≥1-cycle soak — all external/time-gated; D1/D2/D3.3 proven in-prototype (D3.3 still owes a port into `libstore-tests`). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
+> | **F-SERVE-DIAG** | ⏳ **Layout + back-compat proven**, freeze still blocked | **D3.1** named-maintainer sign-off, **D3.2** queue-runner branch, **D3.4** ≥1-cycle soak — all external/time-gated; D1/D2/D3.3 proven in-prototype, and **D3.3 now also ported into `src/libstore-tests`** (`serve-diag-core.cc`, `SERVE_PROTOCOL_VERSION` unbumped). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
 >
 > The honest one-liner: **F-INT resolves now; F-WIRE and F-SERVE-DIAG have their
 > engineering preconditions discharged but cannot freeze until Hydra coordinates
@@ -225,10 +225,15 @@ maintainer (serializer + version bump).
 > bytes, additive layout, **2.8-reads-2.9-bytes**, negotiated-down emits no
 > tail, the back-compat matrix **both directions**, `QueryBuildLog` round-trip
 > (`nix log` over serve), and the deferred `builderId`/`deduplicated` staying
-> behind the unstable gate. This *is* D3.3's proof, but standalone — the literal
-> checklist item still owes a port into `src/libstore-tests`. **D3.1, D3.2, and
-> D3.4 are external/time gates no prototype can close** — they are why D4 (the
-> Hydra thread) is the long pole. `SERVE_PROTOCOL_VERSION` stays unbumped.
+> behind the unstable gate. This *is* D3.3's proof. **The literal checklist item
+> is now closed: the goldens are ported into `src/libstore-tests`** as
+> `serve-diag-core.cc` (9 gtest cases mirroring the prototype's ladder), a
+> self-contained characterisation of the candidate 2.9 layout that pins
+> `SERVE_PROTOCOL_VERSION == (2<<8|8)` via `static_assert` so it guards the
+> layout in CI during the soak without touching the production serializer or
+> bumping the wire. **D3.1, D3.2, and D3.4 are external/time gates no prototype
+> can close** — they are why D4 (the Hydra thread) is the long pole.
+> `SERVE_PROTOCOL_VERSION` stays unbumped.
 
 ---
 
@@ -253,10 +258,18 @@ Workstream D:  D1+D2 (now, behind unstable) ──► D3.1…D3.4 + D4 ──►
 
 ## Readiness checklists (copy-paste gates)
 
-**Freeze F-INT (Phase 3 internal interface):** ✅ **all gates met — freezable.**
+**Freeze F-INT (Phase 3 internal interface):** ✅ **all engineering gates met —
+assessed freezable; awaiting the maintainer's freeze decision.**
 - [x] A1, A2, A3 built; A-dedup, A-replay, A-backpressure, A-sockauth, A-crash,
   A-spawn all green; A-throughput measured and within the provisional ceiling
   (no escalation needed). *(Workstream A prototype, `make check`.)*
+- [ ] **Freeze sign-off by the libstore/daemon maintainer.** This is the one
+  remaining F-INT action and it is **not** a coding task: the evidence above
+  discharges every *engineering* precondition (the §3 child↔coordinator control
+  protocol, registry, replay/refcount semantics are all validated), so this
+  record **assesses F-INT freezable** — but the actual decision to freeze the
+  internal interface belongs to the libstore/daemon maintainer, not to this
+  validation pass. Nothing further is owed from a coding session.
 
 **Freeze F-WIRE (Phase 3 public Build Session surface):** ⏳ Nix-side cleared;
 blocked on the external Hydra field set.
@@ -271,8 +284,17 @@ blocked on the external Hydra field set.
 proven; blocked on external sign-off + soak.
 - [x] D1 implemented behind unstable (modelled); D2 golden/characterisation
   tests green (Workstream D prototype, `make check`).
-- [x] **D3.3** (golden back-compat both ways) — proven standalone; *owes a port
-  into `src/libstore-tests`* to close the literal item.
+- [x] **D3.3** (golden back-compat both ways) — **ported into `src/libstore-tests`**
+  as `serve-diag-core.cc` (9 gtest cases: round-trip at 2.3/2.6/2.8/2.9, golden
+  bytes, additive layout, 2.8-reads-2.9-bytes, negotiated-down emits no tail, the
+  back-compat matrix both directions incl. the `{3,0}`-rejection regression
+  guard, and a `QueryBuildLog` round-trip). The port is a self-contained
+  characterisation of the **candidate** 2.9 layout: it does **not** touch the
+  production serve serializer and a `static_assert` pins
+  `SERVE_PROTOCOL_VERSION == (2<<8|8)`, so it guards the layout during the soak
+  without bumping the wire. At freeze, the goldens retarget the real serializer
+  and the self-contained model is deleted. *(The literal checklist item is now
+  closed; D3.1/D3.2/D3.4 below still gate the freeze.)*
 - [ ] **D3.1** (named maintainer sign-off) — external.
 - [ ] **D3.2** (queue-runner branch) — external.
 - [ ] **D3.4** (≥1-cycle soak on the unstable version) — time-gated.
@@ -299,6 +321,22 @@ of the three freezes** above. They are tracked here so the plan stays complete:
   |---|---|---|
   | **R-class** | a builder-internal failure (e.g. OOM / exit 137 under a memory cap) vs. a build-intrinsic failure | the `BuildResult` failure carries a **transient/retryable** class + (for resource exhaustion) a resource hint, *distinct* from a build-error class; a transient failure is **not** cached/reused — no key poisoning (RFC §4.4) |
   | **M-arch** | concurrent builds of the same package for `x86_64-linux` and `aarch64-linux` against one endpoint | **two distinct keys, never coalesced**; each result reused only for its own system (RFC §4.7; guardrail §8.1 #1) |
+
+  > **Placement decided: throw-away prototype, not real tests.** Both exercise
+  > Phase-3 *coordinator* semantics (failure classification + retry sizing; the
+  > build-key definition) that have no production code yet, and the §4.4
+  > classification fields ride the **deferred** serve set — so a `tests/functional`
+  > or `src/libstore-tests` test would have nothing real to drive. They live in
+  > the Workstream-A coordinator prototype (`make check-fwd`):
+  > **R-class** — `tests/r-class.sh` (10 assertions: OOM/exit-137 → `class=transient`
+  > + `hint=memory`, distinct from a build-error class, and a re-run of the same
+  > key starts a fresh build — proving the failure is not cached / no key
+  > poisoning); **M-arch** — `tests/m-arch.sh` (9 assertions: a package built for
+  > `x86_64-linux` vs `aarch64-linux` yields two distinct keys → two builds, never
+  > coalesced, with an identical-key positive control that *does* coalesce). Both
+  > green. Modelling the deferred failure-classification fields required a small
+  > extension to the prototype's client-facing result record (a `FailClass` +
+  > `resourceHint`), kept off the frozen 2.9 core exactly as Blocker 3 specifies.
 
 - The §4.4 failure-classification fields ride the **deferred** serve set
   (decisions Blocker 3), so they do **not** move the F-SERVE-DIAG gate.

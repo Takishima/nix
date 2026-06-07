@@ -106,9 +106,11 @@ bool sendLog(int clientFd, bool replayed, const std::string & bytes)
     BufWriter w; w.u8(uint8_t(CRec::Log)); w.u8(replayed ? 1 : 0); w.str(bytes);
     return writeAllBlocking(clientFd, frame(w.buf));
 }
-void sendResult(int clientFd, ResultStatus st, uint32_t code, bool dedup, const std::string & logRef)
+void sendResult(int clientFd, ResultStatus st, uint32_t code, bool dedup, const std::string & logRef,
+                FailClass fc = FailClass::None, const std::string & resourceHint = "")
 {
     BufWriter w; w.u8(uint8_t(CRec::Result)); w.u8(uint8_t(st)); w.u32(code); w.u8(dedup ? 1 : 0); w.str(logRef);
+    w.u8(uint8_t(fc)); w.str(resourceHint);
     writeAllBlocking(clientFd, frame(w.buf));
 }
 void sendDenied(int clientFd)
@@ -171,7 +173,7 @@ void handleConnection(int clientFd)
         w.str(q.buildKey); w.str(q.drvForBuild); w.u32(q.uid); w.u8(q.trusted);
         w.u8(q.replayWanted); w.u8(q.explicitRoot); w.str(q.counterFile); w.u32(q.nLines); w.u32(q.sleepMs);
         w.u8(q.ca); w.str(q.unresolvedDrv); w.str(q.resolvedDrv); w.u32(q.resolveMs);
-        w.u32(q.timeoutMs); w.u8(q.keepFailed); w.u32(q.failAt);
+        w.u32(q.timeoutMs); w.u8(q.keepFailed); w.u32(q.failAt); w.u32(q.failCode);
         writeAllBlocking(coord, frame(w.buf));
     }
     auto replyBody = readFrameBlocking(coord);
@@ -234,7 +236,8 @@ void handleConnection(int clientFd)
                 case Msg::BuildResult: {
                     ResultStatus st = ResultStatus(r.u8()); uint32_t code = r.u32();
                     bool d = r.u8() != 0; std::string logRef = r.str();
-                    sendResult(clientFd, st, code, d || dedup, logRef);
+                    FailClass fc = FailClass(r.u8()); std::string resourceHint = r.str();
+                    sendResult(clientFd, st, code, d || dedup, logRef, fc, resourceHint);
                     ::close(coord);
                     return;
                 }

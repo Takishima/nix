@@ -72,7 +72,7 @@ int main(int argc, char ** argv)
         w.str(q.buildKey); w.str(q.drvForBuild); w.u32(q.uid); w.u8(q.trusted);
         w.u8(q.replayWanted); w.u8(q.explicitRoot); w.str(q.counterFile); w.u32(q.nLines); w.u32(q.sleepMs);
         w.u8(q.ca); w.str(q.unresolvedDrv); w.str(q.resolvedDrv); w.u32(q.resolveMs);
-        w.u32(q.timeoutMs); w.u8(q.keepFailed); w.u32(q.failAt);  // keep in sync with the coordinator parser
+        w.u32(q.timeoutMs); w.u8(q.keepFailed); w.u32(q.failAt); w.u32(q.failCode);  // keep in sync with the coordinator parser
 
         long t0 = nowUs();
         if (!writeAllBlocking(fd, frame(w.buf))) { std::fprintf(stderr, "REFUSED\n"); return 1; }

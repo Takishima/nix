@@ -162,9 +162,24 @@ inline std::optional<std::string> takeFrame(std::string & in)
 // build cancellation — the build continues for others (the max-envelope rule).
 enum class ResultStatus : uint8_t { Success = 0, Failure = 1, TimedOut = 2 };
 
+// Failure classification (RFC §4.4, §4.7.5 — the elastic-backend
+// "builder-internal/transient failure vs build-intrinsic failure" split). These
+// fields ride the *deferred* serve set (decisions Blocker 3: builderId,
+// deduplicated, and the §4.4 failure-classification fields stay behind the
+// unstable serve version), so in the real wire they live next to `deduplicated`,
+// NOT in the frozen 2.9 diagnostic core. Modelled here on the client-facing
+// CRec::Result (the public-wire stand-in) so the R-class test can observe them.
+//
+//   BuildError  — the build itself failed deterministically (non-zero exit in
+//                 1..127). Cacheable as a real result; retrying won't help.
+//   Transient   — the builder/environment failed out-of-band (killed by a signal,
+//                 exit >= 128: OOM=137, etc.). Retryable, right-sized by the
+//                 resourceHint; MUST NOT be cached/reused (no key poisoning).
+enum class FailClass : uint8_t { None = 0, BuildError = 1, Transient = 2 };
+
 enum class CRec : uint8_t {
     Log    = 1, // { replayed, bytes }
-    Result = 2, // { status, exitCode, deduplicated, logRef }
+    Result = 2, // { status, exitCode, deduplicated, logRef, failClass, resourceHint }
     Denied = 3, // authorize() refused (no existence info leaked)
 };
 
@@ -198,6 +213,7 @@ struct ClientRequest {
     uint32_t    timeoutMs = 0;    // per-subscriber deadline (0 = none); max-envelope rule
     uint8_t     keepFailed = 0;   // --keep-failed (logical OR across subscribers)
     uint32_t    failAt = 0;       // builder fails at this line (0 = never) — for C-e
+    uint32_t    failCode = 0;     // exit code at failAt (0 -> builder default 1); 137 = OOM (R-class)
 
     std::string encode() const {
         BufWriter w;
@@ -205,7 +221,7 @@ struct ClientRequest {
         w.u8(replayWanted); w.u8(explicitRoot); w.str(counterFile);
         w.u32(nLines); w.u32(sleepMs); w.u8(behavior);
         w.u8(ca); w.str(unresolvedDrv); w.str(resolvedDrv); w.u32(resolveMs);
-        w.u32(timeoutMs); w.u8(keepFailed); w.u32(failAt);
+        w.u32(timeoutMs); w.u8(keepFailed); w.u32(failAt); w.u32(failCode);
         return w.buf;
     }
     static ClientRequest decode(const std::string & body) {
@@ -214,7 +230,7 @@ struct ClientRequest {
         q.replayWanted = r.u8(); q.explicitRoot = r.u8(); q.counterFile = r.str();
         q.nLines = r.u32(); q.sleepMs = r.u32(); q.behavior = r.u8();
         q.ca = r.u8(); q.unresolvedDrv = r.str(); q.resolvedDrv = r.str(); q.resolveMs = r.u32();
-        q.timeoutMs = r.u32(); q.keepFailed = r.u8(); q.failAt = r.u32();
+        q.timeoutMs = r.u32(); q.keepFailed = r.u8(); q.failAt = r.u32(); q.failCode = r.u32();
         return q;
     }
 };
