@@ -277,6 +277,32 @@ proven; blocked on external sign-off + soak.
 - [ ] **D3.2** (queue-runner branch) — external.
 - [ ] **D3.4** (≥1-cycle soak on the unstable version) — time-gated.
 
+## Forward-compatibility & elastic-backend additions (gate no freeze)
+
+The RFC's elastic/distributed additions — the distributed-backend class
+(§4.3.4), the persistence/high-load seams (§4.3.5), builder-internal failure
+classification + right-sized retry (§4.4, §4.7.5), multi-architecture pools
+(§4.7), the deployment/operational model (§4.10), and the forward-compatibility
+guardrails (§8.1) — are **all below the client wire** and therefore **gate none
+of the three freezes** above. They are tracked here so the plan stays complete:
+
+- **§8.1 guardrails → a Phase 3 implementation-review gate (not a freeze gate).**
+  Each PR implementing Phases 0–7 is checked against the eight guardrails (key on
+  the resolved drv; program against the registry interface; refcounted cancel
+  even when count = 1; keep the elastic opt-out a real branch; per-build activity
+  tagging from the start; no build/connection host-or-store locality assumption;
+  append-only deferred wire fields; no un-shardable global state). A violation is
+  a review blocker because each is cheap now and expensive to retrofit.
+- **New functional tests (added to the inventory; gate no freeze):**
+
+  | ID | Scenario | Assert |
+  |---|---|---|
+  | **R-class** | a builder-internal failure (e.g. OOM / exit 137 under a memory cap) vs. a build-intrinsic failure | the `BuildResult` failure carries a **transient/retryable** class + (for resource exhaustion) a resource hint, *distinct* from a build-error class; a transient failure is **not** cached/reused — no key poisoning (RFC §4.4) |
+  | **M-arch** | concurrent builds of the same package for `x86_64-linux` and `aarch64-linux` against one endpoint | **two distinct keys, never coalesced**; each result reused only for its own system (RFC §4.7; guardrail §8.1 #1) |
+
+- The §4.4 failure-classification fields ride the **deferred** serve set
+  (decisions Blocker 3), so they do **not** move the F-SERVE-DIAG gate.
+
 ## Owners at a glance
 
 | Workstream | Gate | Owner |

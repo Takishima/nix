@@ -743,7 +743,11 @@ Single-process multiplexed backends (nixbuild.net-style endpoints, a single
 so they implement the registry/broadcaster/refcount **natively** and proceed in
 parallel — they do **not** wait on this spike. The coordinator exists **only** to
 give the stock fork-per-connection daemon the same semantics those backends get
-for free. Critically, the **Build Session wire surface (RFC §4.1) is identical for
+for free. (A genuine nixbuild.net-style service is not literally one process but
+a *distributed* backend — orchestrator + remote builder pods — now treated in
+RFC §4.3.4, with its persistence/high-load seams in §4.3.5; it still needs none
+of *this stock-daemon coordinator*, only the same below-the-wire registry design
+applied across its own nodes.) Critically, the **Build Session wire surface (RFC §4.1) is identical for
 both backend classes**: a client cannot tell whether the `STDERR_*` frames and
 `deduplicated` result came from a single-process backend's in-memory broadcaster
 or from a stock daemon's coordinator-relayed child. That is the whole point of

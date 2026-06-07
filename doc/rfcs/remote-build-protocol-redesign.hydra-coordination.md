@@ -91,8 +91,11 @@ before the new tail.
 | `logTail` | list&lt;string&gt; | the last N log lines (the data `fixupBuilderFailureErrorMessage` embeds locally today, `derivation-building-goal.cc:1157`) |
 
 **Deferred — NOT in the diagnostic core** (kept behind the unstable version because their
-semantics depend on the still-spiking Phase 3 dedup/coordinator design):
-`builderId`, `deduplicated`.
+semantics depend on the still-spiking Phase 3 dedup/coordinator and
+elastic-backend designs): `builderId`, `deduplicated`, and the elastic-backend
+failure-classification fields (a transient/retryable flag, failure-class, and a
+resource hint; RFC §4.4). These are listed only so Hydra sees the shape that is
+coming; **none is part of the frozen ask**.
 
 ### 2. New operation: `QueryBuildLog`
 

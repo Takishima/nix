@@ -18,8 +18,9 @@
 > additive and version-gated via the `min(client,server)` handshake
 > (`serve-protocol-connection.cc:8-33`); (3) **below-the-wire** — the
 > client-facing Build Session surface is identical whether the backend is a
-> single-process/elastic service or the stock fork-per-connection daemon +
-> coordinator (spike §5.1, §5.3).
+> single-process/elastic service, a distributed/multi-node orchestrator
+> (RFC §4.3.4), or the stock fork-per-connection daemon + coordinator
+> (spike §5.1, §5.3).
 >
 > The coordinator interface (spike §3) is taken as settled: the registry,
 > replay buffer, and refcounts live in one coordinator process, behind a
@@ -269,7 +270,11 @@ resolved drv path the builder asserts it persisted the log under, the key
 operation**. The **deferred set** — `builderId` and `deduplicated` — stays behind
 an **unstable/experimental serve version** because its semantics are defined by
 the Phase 3 coordinator/dedup design, which is explicitly *not* frozen; freezing
-it now would overcommit to dedup semantics still in spike. The absolute
+it now would overcommit to dedup semantics still in spike. **The elastic-backend
+failure-classification fields (the transient/retryable flag, failure-class, and
+resource hint of RFC §4.4) join this deferred set** for the same reason — their
+semantics depend on the still-spiking elastic-backend design (RFC §8.1
+guardrail 7). The absolute
 **minimum to unblock Phase 1 without overcommitting is `logRef` +
 `QueryBuildLog`** (the two that let Hydra fetch the persisted log instead of
 capturing it inline); `failurePhase`/`exitCode`/`logTail` are the recommended,
@@ -349,7 +354,9 @@ as frozen.
   asserts the log is persisted (`LogStore::getBuildLog` key); structured failure
   = phase/exit/tail as *fields*, not baked into the message string.
 - **Deferred (explicitly NOT frozen):** `builderId`, `deduplicated` — carried on
-  the unstable version, free to change until Phase 3 semantics settle.
+  the unstable version, free to change until Phase 3 semantics settle. The RFC
+  §4.4 failure-classification fields (transient/retryable flag, failure-class,
+  resource hint) are deferred on the same basis (RFC §8.1 guardrail 7).
 - **Back-compat matrix (both directions, via `min()` handshake):**
 
   | Client | Server | Negotiated | Behaviour |
@@ -648,7 +655,9 @@ never to incorrectness.
   exercised, and the §4 guarding test added; file **persistent registry +
   re-adoption** as a *separate, evidence-gated* hardening item (its own small RFC
   if/when coordinator-crash frequency justifies it), explicitly **not** a Phase 3
-  prerequisite.
+  prerequisite. RFC §4.3.5 records the registry-interface seams (the lease/CAS
+  shape and the live-registry / durable-reuse-cache split) that keep this future
+  hardening an additive extension rather than a redesign.
 
 ---
 
@@ -736,7 +745,9 @@ measurement** (spike §4.2). Rationale and guard-rails:
 - **The natural shard axis, if needed, is the build key:** builds are
   independent and the registry is the only shared structure, so a later design
   can drain build→subscriber fan-out on a per-build worker / thread pool behind
-  the single-threaded registry without a redesign.
+  the single-threaded registry without a redesign. This is the same axis a
+  persistent/distributed registry shards on (RFC §4.3.5 seam 5), so the
+  sharded-coordinator and persistence extensions align on one key.
 - Because the coordinator is **below the wire** (spike §5.1), moving from one
   loop to a sharded design later is an **internal** change with no wire or
   back-compat impact — so fixing the v1 posture now forecloses nothing.
@@ -966,8 +977,10 @@ hard-cap `maxJobs` semantics unchanged. Lands in **Phase 6**.
   — they define what "the same build" means and who may observe it, and are
   expensive to change later. *Freeze with Hydra:* the serve diagnostic core **diagnostic
   core** (`logRef`, `failurePhase`, `exitCode`, `logTail`, `QueryBuildLog`).
-  *Stay unstable:* `builderId`, `deduplicated`, and the CA `resolving`-merge wire
-  details, all bound to the still-spiking Phase 3 coordinator. Blocker 2 freezes
+  *Stay unstable:* `builderId`, `deduplicated`, the RFC §4.4
+  failure-classification fields (transient/failure-class/resource hint), and the
+  CA `resolving`-merge wire details, all bound to the still-spiking Phase 3
+  coordinator / elastic-backend design. Blocker 2 freezes
   *no* wire (coordinator-internal) but its table is agreed before Phase 3 code.
 - **Test that proves each (per RFC §9):** B1 → trust tests (existence-oracle,
   CA-merge re-auth, key-spoof); B2 → the `build-dedup-cancel` matrix; B3 →
