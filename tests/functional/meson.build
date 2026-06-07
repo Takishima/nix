@@ -145,6 +145,7 @@ suites = [
       'build-remote-fail-loud.sh',
       'build-remote-serve-log-stream.sh',
       'build-dedup-coordinator.sh',
+      'build-dedup-cancel.sh',
       'store-split-log.sh',
       'post-hook.sh',
       'function-trace.sh',
