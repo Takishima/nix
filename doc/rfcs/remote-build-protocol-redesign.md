@@ -994,6 +994,30 @@ This validates the RFC's direction and sharpens five requirements:
    carries the *give-up* signal, classified — which is also what keeps the
    transient failure out of the reuse cache (§4.4).
 
+**Heterogeneous (multi-architecture) pools fall out for free.** A single
+orchestrator endpoint can stand in front of, say, `x86_64-linux` *and*
+`aarch64-linux` pods — which is exactly what nixbuild.net offers. Three
+existing facts make this work with no new wire surface:
+
+1. The build key is the *resolved derivation*, which includes the drv's
+   `system` (and required features), so x86 and aarch64 builds are **distinct
+   keys that never coalesce** — the registry is architecture-safe by
+   construction (Blocker 1, §4.3.5 seam 4), and a built result is reused only
+   for the arch it was built for.
+2. Nix already lets one builder/endpoint advertise **multiple systems and
+   features** (the comma-separated system list and `supportedFeatures` in
+   `/etc/nix/machines`), so a hook client selects the orchestrator for both
+   arches via the existing matching, and a direct `--store ssh-ng://` build
+   simply sends a drv whose `system` the orchestrator must satisfy.
+3. Routing a build to a matching-arch pod is **scheduling the orchestrator
+   already owns**, below the wire (§4.3.4, §4.7).
+
+The only honest constraints: the orchestrator must advertise only
+systems/features it can actually route to a real pod, and "elastic capacity"
+(O7) is conceptually **per system class** — an infinite x86 pool says nothing
+about aarch64 headroom — so capacity advertisement and `maxJobs` hints are
+reasoned about per arch, not globally.
+
 None of this requires Nix to *become* a scheduler (that stays a non-goal,
 and Hydra's job): it requires the protocol to (a) not impose client-side
 scheduling where the backend already does it, (b) multiplex many tagged
@@ -1355,7 +1379,10 @@ maps to an existing decision, so none is new policy.
    input-addressed drv path.** Every dedup / lookup / `logRef` site keys on
    `hash(resolved drv)` (Blocker 1, §4.3.5 seam 4). A store-path-as-key shortcut
    "works" on the stock daemon and silently breaks CA coalescing and global
-   reuse. *Phases 0, 3, 6.*
+   reuse. Because the resolved drv carries the `system` and required features,
+   this also keeps the registry **architecture-safe** — never normalize or strip
+   those from the key, or a multi-arch orchestrator (§4.7) could coalesce an x86
+   and an aarch64 build. *Phases 0, 3, 6.*
 
 2. **Program coordination against the registry interface, not its transport.**
    The registry operations (§4.3.5 seam 1) must not inline the Unix-socket /
