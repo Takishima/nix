@@ -454,14 +454,27 @@ phases, `--log-format internal-json`, etc.).
 > the stock daemon is fork-per-connection with no shared `Worker`, so there
 > is no in-process registry to "lift". This section describes the *target*
 > semantics, and is explicitly **conditional on a cross-process
-> coordination mechanism (§4.3.3)**. Two deployment classes get it on very
-> different timelines:
+> coordination mechanism (§4.3.3)**. Three deployment classes get it on very
+> different terms; the load-bearing distinction is **single *endpoint* ≠
+> single *process***:
 >
-> * **Single-process multiplexed backends** — a nixbuild.net-style endpoint,
->   or a single `RemoteStore` connection driving many builds — can implement
->   the registry/broadcaster natively in their own address space and get
+> * **Single-process multiplexed backends** — a single `RemoteStore`
+>   connection driving many builds, or any backend that terminates the
+>   protocol and runs the builds in *one address space* — can implement the
+>   registry/broadcaster natively in process memory and get
 >   dedup/attach/replay essentially "for free". This is where the feature
 >   lands first and most cleanly.
+> * **Distributed / multi-node backends** — a nixbuild.net-style service, or
+>   a Kubernetes "orchestrator + dynamic builder pods" deployment: a *single
+>   endpoint* fronting an autoscaling pool, but **not** a single process and
+>   not even a single machine. The orchestrator holds the registry in its own
+>   memory, but the build runs on a *separate* node, so the log broadcaster,
+>   refcounted-cancel, and trust checks span a **network boundary** rather
+>   than an address space. Structurally this is the same problem the
+>   stock-daemon coordinator (§4.3.3) solves, with the builder moved across
+>   the wire; the machine-local mechanics are replaced by their distributed
+>   equivalents (§4.3.4). As with the single-process case, none of this is
+>   visible on the client wire.
 > * **The stock fork-per-connection `nix-daemon`** gets cross-client
 >   dedup/fan-out **only** once §4.3.3 is built; until then it keeps today's
 >   behaviour (work coalesced by output `PathLocks`, no log fan-out). The
@@ -645,9 +658,45 @@ candidate mechanisms, in rough order of increasing scope:
 This RFC does **not** pick one here; it flags the choice as a **design
 spike** that must precede freezing any Phase 3 wire surface (§8, §10),
 because the mechanism bounds what session re-attach (§4.7.4) and
-`QueryActiveBuilds` can promise. Single-process backends (nixbuild.net,
-single-`RemoteStore` drivers) need none of this and can proceed in
-parallel.
+`QueryActiveBuilds` can promise. Single-process backends
+(single-`RemoteStore` drivers) and distributed backends (nixbuild.net-style
+services and Kubernetes orchestrator+pods deployments, §4.3.4) need none of
+this *stock-daemon* coordinator and can proceed in parallel.
+
+#### 4.3.4 Distributed / multi-node backends (orchestrator + remote builders)
+
+§4.3.3 works out cross-process coordination for the *stock daemon on one
+machine*. A distributed backend — a nixbuild.net-style service, or a
+Kubernetes deployment with an **orchestrator** that terminates `ssh-ng://`
+and **dynamic builder pods** that run the actual builds — needs the *same*
+registry/broadcaster/refcount design, but every place §4.3.3 and the spike
+rely on a machine-local primitive becomes a distributed-systems problem.
+
+Crucially, **none of this reaches the client wire** (§4.1): the orchestrator
+emits the same Build Session frames and extended `BuildResult` whether the
+build ran in its own memory, in a forked child, or in a pod three racks over.
+So this section adds **no normative protocol requirement** and does **not**
+gate any frozen surface (§7); it is guidance for backend implementers,
+recording what the single-machine assumptions map onto once the builder is
+across the network. The stock-daemon coordinator (§4.3.3) is the reference
+design for the one case Nix ships itself — *not* a constraint on how an
+elastic service is built behind its endpoint.
+
+| Single-machine assumption (§4.3.3 / spike) | Distributed-backend equivalent |
+|---|---|
+| Coordinator↔builder is a local **Unix socket**, an unversioned "implementation detail of one machine" (spike §3.2) | A **network RPC** orchestrator↔pod that must be **versioned and secured** like any other wire — though still private to the backend, never the client's. |
+| Trust via **`SO_PEERCRED`** peer-creds on a local socket (spike §3.7.1) | Network identity — **mTLS** / service-mesh / pod-identity. The §6 *authorization-before-subscribe* rule is unchanged; only the *authentication* primitive differs. |
+| Coordinator **runs the `Worker` and `fork()`s the builder** in-process (spike §2.2, §3.1) | Orchestrator **dispatches** to a remote builder pod; it schedules and fans out logs but does not itself run the sandboxed build. |
+| Safe-degrade floor = output **`PathLocks` on a shared store** + `dieWithParent` builders (O2, §1.3) | Holds only with a **shared (network) `/nix/store`**. With per-pod stores there is no cross-pod lock floor, so outputs must be **copied back** from the pod and dedup correctness rests on the orchestrator's registry alone. |
+| Registry / refcount / replay buffer in **one process's memory** (spike §3.5) | Registry can stay in the orchestrator's memory, but the **log broadcaster and refcounted-cancel now span the network**: frames are pulled from the pod and cancels pushed to it. |
+
+These are real engineering tasks, but they are the backend implementer's to
+solve behind the endpoint — exactly as nixbuild.net already does today. One
+**new failure mode** appears only in this class and is called out in §4.7.4:
+a builder pod can be **evicted or rescheduled while the orchestrator and the
+client connection are both healthy** — "the build dies though the endpoint
+lives," which neither the refcount-to-zero nor the coordinator-death case of
+§4.3 covers.
 
 ### 4.4 Extended `BuildResult` and durable diagnostics (G2)
 
@@ -806,7 +855,16 @@ This validates the RFC's direction and sharpens four requirements:
    single-process backends (which already keep the build alive), and on the
    stock daemon only once a coordinator (§4.3.3) owns the build. The RFC
    should not promise re-attach for the stock daemon before that spike
-   lands.
+   lands. In a **distributed backend** (§4.3.4) re-attach must also survive
+   the inverse case the stock-daemon matrix omits: the **builder node/pod is
+   evicted or rescheduled while the endpoint and the client stay up** ("the
+   build dies though the endpoint lives"). This is neither a client
+   disconnect (refcount unchanged) nor a coordinator death (orchestrator
+   healthy); the orchestrator must detect the lost builder (lease/heartbeat)
+   and either transparently re-dispatch the build or surface a retryable
+   failure to attached sessions. The refcounted-cancel rules (§4.3,
+   Blocker 2) are unaffected — this is a builder-liveness event, orthogonal
+   to subscriber count.
 
 None of this requires Nix to *become* a scheduler (that stays a non-goal,
 and Hydra's job): it requires the protocol to (a) not impose client-side
@@ -1225,7 +1283,9 @@ scoped: the stock `nix-daemon` is fork-per-connection (§2.3), so there is
 **no shared `Worker`** to lift; cross-client dedup with log fan-out and
 re-attach needs a new cross-process coordination mechanism (§4.3.3), which
 this RFC frames as a gated design spike. It lands natively and first on
-single-process / elastic backends (nixbuild.net-style endpoints), and on
+single-process and distributed/elastic backends (nixbuild.net-style services
+and Kubernetes orchestrator+pods deployments, §4.3.4) — which own the build
+behind their endpoint and never need the *stock-daemon* coordinator — and on
 the stock daemon only once that spike resolves.
 
 The whole is unified behind a **Build Session** abstraction and a
