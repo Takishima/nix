@@ -7,7 +7,7 @@
 echo "[A-throughput] measurement of the single-threaded coordinator under load"
 setup; trap teardown EXIT
 
-BUILDS=${WSA_TP_BUILDS:-32}
+BUILDS=${WSA_TP_BUILDS:-64}   # validation.md A-throughput: "≥64 parallel builds"
 SUBS=${WSA_TP_SUBS:-4}
 LINES=${WSA_TP_LINES:-40}
 

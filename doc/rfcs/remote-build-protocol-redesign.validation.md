@@ -99,9 +99,9 @@ productionization, serve bridge.
 > runs all criteria green on a real `fork()`-per-connection daemon model:
 > A-dedup, A-replay, A-backpressure, A-sockauth (real `SO_PEERCRED`), A-crash
 > (real `PR_SET_PDEATHSIG`), A-spawn all PASS; A-throughput **measured**
-> (single-threaded coordinator ≈0.09 CPU-s across 32 builds × 4 subscribers —
-> well under any ceiling that would force the O4 sharding). **F-INT is
-> freezable.**
+> (single-threaded coordinator ≈0.2 CPU-s across 64 builds × 4 subscribers —
+> well under any ceiling that would force the O4 sharding; exact CPU figure is
+> host-dependent). **F-INT is freezable.**
 
 ---
 
