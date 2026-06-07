@@ -218,6 +218,13 @@ fun<BuildResult()> LegacySSHStore::buildDerivationAsync(
 void LegacySSHStore::buildPaths(
     const std::vector<DerivedPath> & drvPaths, BuildMode buildMode, std::shared_ptr<Store> evalStore)
 {
+    // Building on an `ssh://` (serve) store with a separate `--eval-store`
+    // needs the full hook choreography (copy the drv closure *and* the build
+    // inputs' outputs eval->build, build, copy outputs back) — RFC
+    // remote-build-protocol-redesign §4.6's deferred `realiseRemote(...)`. A
+    // one-shot `copyClosure` of the .drv is not enough (the serve build can't
+    // realise the inputs), so for now keep the clean rejection rather than
+    // fail confusingly mid-build. `ssh-ng://` already supports the split.
     if (evalStore && evalStore.get() != this)
         throw Error("building on an SSH store is incompatible with '--eval-store'");
 
