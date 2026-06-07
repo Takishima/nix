@@ -22,12 +22,14 @@
     "timesBuilt": 3
   },
   {
+    "builderId": "builder-7",
     "builtOutputs": {
       "foo": {
         "outPath": "g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo",
         "signatures": []
       }
     },
+    "deduplicated": true,
     "startTime": 30,
     "status": "Built",
     "stopTime": 50,

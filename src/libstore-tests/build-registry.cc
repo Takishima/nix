@@ -57,15 +57,14 @@ BuildResult successResult()
     return res;
 }
 
-/** A policy that denies one specific key (to exercise authorize-before-registry). */
-struct DenyKeyPolicy : BuildAuthPolicy
+/** A policy under which only trusted identities may build (the existing daemon
+ *  notion that untrusted users cannot build arbitrary derivations). Used to
+ *  exercise authorize-before-registry and the no-existence-oracle property. */
+struct TrustedOnlyPolicy : BuildAuthPolicy
 {
-    BuildRegistryKey denied;
-    bool mayBuild(const BuildAuth & auth, const BuildRegistryKey & k) const override
+    bool mayBuild(const BuildAuth & auth, const BuildRegistryKey &) const override
     {
-        if (auth.trusted)
-            return true;
-        return k != denied;
+        return auth.trusted;
     }
 };
 
@@ -450,8 +449,7 @@ TEST(BuildRegistry, keepFailedIsLogicalOr)
 
 TEST(BuildRegistry, authorizeBeforeRegistryUniformDenial)
 {
-    DenyKeyPolicy policy;
-    policy.denied = key("secret");
+    TrustedOnlyPolicy policy;
     auto reg = makeInMemoryBuildRegistry(policy);
 
     BuildAuth trusted{.identity = "root", .trusted = true};
