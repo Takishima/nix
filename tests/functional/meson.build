@@ -142,6 +142,7 @@ suites = [
       'nix-copy-ssh-ng.sh',
       'ssh-ng-build-log.sh',
       'serve-build-log.sh',
+      'build-remote-fail-loud.sh',
       'post-hook.sh',
       'function-trace.sh',
       'formatter.sh',
