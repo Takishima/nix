@@ -1315,6 +1315,38 @@ the log fixes.
   `worker-protocol*`, `build-remote.cc`, `libmain/progress-bar.cc`,
   `nix/main.cc`, `globals.hh`.
 
+  > **Sequencing note — split the fail-loud *render* from the extended
+  > *fields*, and defer the latter.** Phase 1 has two separable parts:
+  >
+  > 1. **Fail-loud render (do now, no wire change).** `build-remote.cc` (and the
+  >    `ssh-ng` path) can already render a loud failure — the failing build's log
+  >    tail plus a `nix log` hint — using only the existing
+  >    `BuildResult::Failure` message and the **Gap A** log fetch (Phase 0). This
+  >    needs **no** new `BuildResult` fields and is what closes the day-to-day CI
+  >    pain. *(Landed for the build hook: `renderRemoteBuildLogTail` in
+  >    `build-remote.cc`.)*
+  > 2. **Extended/structured `BuildResult` fields (`logRef`, `failurePhase`,
+  >    `exitCode`, `logTail`; deferred `builderId`/`deduplicated`) — defer until
+  >    the serve diagnostic-core field set is frozen.** `BuildResult` is a
+  >    **single shared struct** serialized by *both* the worker and serve
+  >    protocols (`worker-protocol.cc`, `serve-protocol.cc`, `common-protocol.cc`,
+  >    `legacy-ssh-store.cc`, `remote-store.cc`), so these fields **cannot** be
+  >    added "only on the worker side": editing the struct and its serializer is
+  >    inseparable from the **serve** layout that [Blocker
+  >    3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51)
+  >    freezes (gated by D3.1/D3.2/D3.4). Adding them before that set settles
+  >    risks committing a worker-protocol byte layout — and new golden fixtures —
+  >    for fields whose names/semantics the soak and sign-off are meant to finish,
+  >    and risks diverging from the serve definition on the shared struct.
+  >
+  > **When it makes sense to do the extended approach:** once the serve
+  > diagnostic core is frozen (or its field set is stable on the unstable serve
+  > version — the `serve-build-logs` gate added in Phase 0), add the *same*
+  > frozen fields to `BuildResult` and serialize them conditionally on **both**
+  > protocols in one change, so worker and serve share one agreed layout and one
+  > set of golden tests. Until then the render in part (1) carries Gap C, and the
+  > structured fields ride the deferred set (decisions Blocker 3).
+
 * **Phase 2 — Live log streaming over serve (bridge) + close Gap B.** Add
   the optional log-frame sequence to serve `BuildDerivation`/`BuildPaths`
   and feed frames into the client `Logger` (delivers **G1** for `ssh://`).

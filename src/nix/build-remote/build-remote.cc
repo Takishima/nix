@@ -16,7 +16,9 @@
 #include "nix/store/pathlocks.hh"
 #include "nix/store/globals.hh"
 #include "nix/util/serialise.hh"
+#include "nix/util/strings.hh"
 #include "nix/store/build-result.hh"
+#include "nix/store/log-store.hh"
 #include "nix/store/store-open.hh"
 #include "nix/util/strings.hh"
 #include "nix/store/derivations.hh"
@@ -48,6 +50,43 @@ static bool allSupportedLocally(Store & store, const StringSet & requiredFeature
         if (!store.config.systemFeatures.get().count(feature))
             return false;
     return true;
+}
+
+/**
+ * Best-effort "fail loud" (Gap C / G8) for a remote build failure: if the build
+ * log can be fetched back from the remote store (now possible over `ssh-ng://`,
+ * and over `ssh://` with the `serve-build-logs` feature — Gap A), return the tail
+ * of it plus a `nix log` hint to append to the failure message. Returns "" if no
+ * log is available, and never throws — surfacing the log must not mask the build
+ * failure itself.
+ */
+static std::string
+renderRemoteBuildLogTail(Store & remoteStore, Store & localStore, const StorePath & drvPath, std::string_view storeUri)
+{
+    constexpr size_t maxLines = 25;
+    try {
+        auto * logStore = dynamic_cast<LogStore *>(&remoteStore);
+        if (!logStore)
+            return "";
+        auto log = logStore->getBuildLogExact(drvPath);
+        if (!log || log->empty())
+            return "";
+
+        auto lines = splitString<std::vector<std::string>>(chomp(*log), "\n");
+        size_t n = std::min(maxLines, lines.size());
+
+        std::string msg = fmt("\nLast %d log lines:\n", n);
+        for (auto it = lines.end() - n; it != lines.end(); ++it)
+            msg += "> " + *it + "\n";
+        // On its own line for easy copying (triple-click).
+        msg += fmt(
+            "For full logs, run:\n  " ANSI_BOLD "nix log --store '%s' '%s'" ANSI_NORMAL,
+            storeUri,
+            localStore.printStorePath(drvPath));
+        return msg;
+    } catch (...) {
+        return "";
+    }
 }
 
 static int main_build_remote(int argc, char ** argv)
@@ -348,8 +387,16 @@ static int main_build_remote(int argc, char ** argv)
                             ? " You can re-run the command with `--builders ''` to disable remote building for this invocation."
                             : "");
                 }
+                // Fail loud (Gap C / G8): a remote build failure used to be terse.
+                // `nix log` now works over the remote store (Gap A), so surface the
+                // tail of the remote build log inline and point at the full log,
+                // mirroring how local build failures are rendered.
                 throw Error(
-                    "build of '%s' on '%s' failed: %s", store->printStorePath(*drvPath), storeUri, failureP->message());
+                    "build of '%s' on '%s' failed: %s%s",
+                    store->printStorePath(*drvPath),
+                    storeUri,
+                    failureP->message(),
+                    renderRemoteBuildLogTail(*sshStore, *store, *drvPath, storeUri));
             }
         } else {
             copyClosure(*store, *sshStore, StorePathSet{*drvPath}, NoRepair, NoCheckSigs, substitute);
