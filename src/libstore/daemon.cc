@@ -14,8 +14,10 @@
 #include "nix/util/finally.hh"
 #include "nix/util/archive.hh"
 #include "nix/store/derivations.hh"
+#include "nix/store/build/build-coordinator.hh"
 #include "nix/util/args.hh"
 #include "nix/util/logging.hh"
+#include "nix/util/environment-variables.hh"
 #include "nix/store/globals.hh"
 #include <variant>
 
@@ -651,7 +653,21 @@ static void performOp(
             drvPath = store->writeDerivation(Derivation{drv2});
         }
 
-        auto res = store->buildDerivation(drvPath, drv, buildMode);
+        auto res = [&]() -> BuildResult {
+            /* Expand/contract (RFC Phase 3): when a build coordinator is
+               configured, relay this build to it for cross-client dedup /
+               attach / log fan-out (guardrail §8.1) instead of building
+               in-process. Additive and gated by NIX_BUILD_COORDINATOR_SOCKET;
+               the in-process path below is the untouched default. The planned
+               contraction promotes this behind an experimental feature and
+               collapses the gate once the coordinator is the proven default.
+               The relay re-emits the shared build's frames through `logger`
+               (the TunnelLogger here), so the client wire is unchanged. */
+            if (auto sock = getEnv("NIX_BUILD_COORDINATOR_SOCKET"); sock && !sock->empty())
+                return relayBuildToCoordinator(
+                    *sock, store->config.getReference().render(true), *store, drvPath, drv, buildMode, *logger, trusted);
+            return store->buildDerivation(drvPath, drv, buildMode);
+        }();
         logger->stopWork();
         WorkerProto::write(*store, wconn, res);
         break;

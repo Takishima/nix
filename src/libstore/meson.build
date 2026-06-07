@@ -281,6 +281,7 @@ sources = files(
   'binary-cache-store.cc',
   'build-result.cc',
   'build/build-log.cc',
+  'build/build-coordinator.cc',
   'build/build-registry.cc',
   'build/derivation-builder.cc',
   'build/derivation-building-goal.cc',

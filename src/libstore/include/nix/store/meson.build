@@ -14,6 +14,7 @@ headers = [ config_pub_h ] + files(
   'binary-cache-store.hh',
   'build-result.hh',
   'build/build-log.hh',
+  'build/build-coordinator.hh',
   'build/build-registry.hh',
   'build/derivation-builder.hh',
   'build/derivation-building-goal.hh',
