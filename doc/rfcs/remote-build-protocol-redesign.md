@@ -28,10 +28,10 @@ kept in sync with this file:
 * **[Validation plan](./remote-build-protocol-redesign.validation.md)** — the
   execution plan that turns the "decided but not yet validated" work into
   sequenced Workstreams A–D, concrete test specs, and the three
-  freeze-readiness checklists (F-INT / F-WIRE / F-SERVE30).
+  freeze-readiness checklists (F-INT / F-WIRE / F-SERVE-DIAG).
 * **[Hydra coordination draft](./remote-build-protocol-redesign.hydra-coordination.md)**
   — the ready-to-post opening message for the external Hydra ↔ Nix thread that
-  must sign off on the serve 3.0 diagnostic core (§4.8, §7).
+  must sign off on the serve diagnostic core (§4.8, §7).
 
 Two earlier review-cycle documents and an open-item tracker have been
 **retired** after their content was folded in: the RFC review and the spike
@@ -828,16 +828,16 @@ the serve side:
   byte-for-byte at version ≤ 2.8. All new capabilities (log frames §4.2,
   `QueryBuildLog` §4.5, extended `BuildResult` fields §4.4,
   `QueryActiveBuilds` §4.3.2, attach/`deduplicated`) are gated behind the
-  serve 3.0 version bump (§7) and the `min(client, server)` handshake
-  (`serve-protocol-connection.cc:8-33`). A 2.x Hydra against a 3.0 builder
-  sees today's behaviour; a 3.0-aware Hydra opts in.
+  serve diagnostic core version bump (§7) and the `min(client, server)` handshake
+  (`serve-protocol-connection.cc:8-33`). A 2.x Hydra against a 2.9 builder
+  sees today's behaviour; a 2.9-aware Hydra opts in.
 * The new structured log channel and `QueryBuildLog` are designed so Hydra
   can **retire its out-of-band log handling** and consume logs the same way
   the `nix` CLI does — but only when it chooses to.
 * The extended `BuildResult` (`builderId`, `deduplicated`, structured
   failure, `logRef`) is directly useful to Hydra's result accounting, so
   the field set should be agreed with Hydra maintainers before freezing the
-  serve 3.0 serialisation. (Tracked as an open question, §10.)
+  serve diagnostic core serialisation. (Tracked as an open question, §10.)
 
 The guiding constraint: **no change may require a coordinated Hydra/Nix
 flag day.** Old Hydra ↔ new Nix and new Hydra ↔ old Nix must both work,
@@ -961,14 +961,14 @@ The "checked before subscribing" rule above is sharpened to:
 
 ## 7. Wire compatibility and versioning
 
-* **Serve protocol** bumps to **3.0**. New capabilities (log frames,
+* **Serve protocol** gains a **minor bump (2.9; major stays 2)**. New capabilities (log frames,
   `QueryBuildLog`, `QueryActiveBuilds`, extended `BuildResult` fields,
   attach/`deduplicated`) are gated on the negotiated version. The
   handshake already negotiates `min(client, server)` versions
-  (`serve-protocol-connection.cc:8-33`); a 3.0 client talking to a 2.8
+  (`serve-protocol-connection.cc:8-33`); a 2.9 client talking to a 2.8
   builder transparently falls back to today's behaviour (no live log, no
-  fetch — but still correct builds). A 2.x client talking to a 3.0 builder
-  never receives 3.0 frames.
+  fetch — but still correct builds). A 2.x client talking to a 2.9 builder
+  never receives 2.9 frames.
 * **Worker protocol** gains the dedup/attach + `QueryActiveBuilds`
   operations and the extended `BuildResult` fields behind its own version
   bump; streaming already exists.
@@ -977,16 +977,16 @@ The "checked before subscribing" rule above is sharpened to:
   (`serve-protocol.cc:17-110`). No existing field changes meaning.
 * Old builders remain fully usable at reduced fidelity; old clients are
   unaffected. There is no flag day.
-* **Do not freeze the serve 3.0 wire until the Hydra field set is agreed
-  (Q4).** Once a 3.0 serialisation ships and is in the wild, its layout is a
+* **Do not freeze the serve diagnostic core wire until the Hydra field set is agreed
+  (Q4).** Once a 2.9 serialisation ships and is in the wild, its layout is a
   back-compat promise. Phases 1/2 may *prototype* the extended `BuildResult`
   and log frames behind an unstable/experimental version, but the byte
-  layout must not be declared stable as 3.0 until the Hydra coordination
+  layout must not be declared stable as 2.9 until the Hydra coordination
   (§4.8) lands — otherwise a later Hydra-driven field change would break the
   very compatibility this section promises.
-* **The serve 3.0 field set is decided as a stable core + a deferred set.**
+* **The serve diagnostic core field set is decided as a stable core + a deferred set.**
   *(Decided — decisions record,
-  [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-30-freeze-rfc-q4-7-spike-51).)*
+  [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51).)*
   The **stable diagnostic core** that lets `hydra-queue-runner` retire its
   out-of-band log handling is `logRef`, structured failure detail
   (`failurePhase` + `exitCode` + `logTail`), and the new `QueryBuildLog`
@@ -994,18 +994,18 @@ The "checked before subscribing" rule above is sharpened to:
   `QueryBuildLog`). The **deferred set** — `builderId` and `deduplicated` —
   stays behind the unstable version, because its semantics are defined by the
   still-spiking Phase 3 coordinator/dedup design and must not be frozen yet.
-  New fields are appended *after* the 2.8 `builtOutputs` block under a `>= {3,0}`
+  New fields are appended *after* the 2.8 `builtOutputs` block under a `>= {2,9}`
   guard in **binary** form (JSON is reserved for the pre-existing 2.6 realisation
   shim), and `QueryBuildLog` is `Command = 10`, the next free value after
   `AddToStoreNar = 9` — so no existing field changes meaning and a 2.8 reader
   stops before the new tail.
-* **Concrete freeze criteria — bump `SERVE_PROTOCOL_VERSION` to `(3 << 8 | 0)`
+* **Concrete freeze criteria — bump `SERVE_PROTOCOL_VERSION` to `(2 << 8 | 9)`
   only when all hold:** (1) a **named Hydra maintainer** has signed off on the
   exact field set and byte order; (2) a `hydra-queue-runner` branch consumes
   `QueryBuildLog` + the structured log frames (§4.2) to drop its out-of-band log
   capture *and* reads the extended `BuildResult`, validated against a new-Nix
-  builder; (3) golden/characterisation tests prove round-trip at 2.8 and 3.0 and
-  that a 2.8 peer ignores 3.0 fields (back-compat matrix, both directions); and
+  builder; (3) golden/characterisation tests prove round-trip at 2.8 and 2.9 and
+  that a 2.8 peer ignores 2.9 fields (back-compat matrix, both directions); and
   (4) the field set has soaked on the unstable version for ≥1 release cycle with
   no layout change.
 
@@ -1114,10 +1114,10 @@ the log fixes.
 
 ## 9. Testing strategy
 
-> The dedup/attach and serve-3.0 tests below are specified concretely (test
+> The dedup/attach and serve diagnostic-core tests below are specified concretely (test
 > IDs, scenarios, assertions) and sequenced against the prototype work in the
 > [validation plan](./remote-build-protocol-redesign.validation.md) (Workstreams
-> A–D and the F-INT/F-WIRE/F-SERVE30 freeze checklists).
+> A–D and the F-INT/F-WIRE/F-SERVE-DIAG freeze checklists).
 
 * **Functional tests** (`tests/functional/`): extend the existing
   `build-remote*.sh` / `build-hook*.sh` tests with assertions that
@@ -1178,10 +1178,10 @@ the log fixes.
    attach to and that is **re-authorised per subscriber against the resolved
    key at promotion** (spike §3.8). See §4.3 and §6.
 4. **Hydra field set.** ✅ **RESOLVED**
-   ([Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-30-freeze-rfc-q4-7-spike-51)).
+   ([Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51)).
    Freeze a stable diagnostic core (`logRef`, `failurePhase`/`exitCode`/
    `logTail`, `QueryBuildLog`); defer `builderId`/`deduplicated` to the unstable
-   version; bump `SERVE_PROTOCOL_VERSION` to 3.0 only on four named freeze
+   version; bump `SERVE_PROTOCOL_VERSION` to 2.9 only on four named freeze
    criteria (incl. a named Hydra maintainer's sign-off). See §7. The Hydra
    coordination *thread* itself remains out of scope for this document.
 5. **`QueryActiveBuilds` privacy.** ✅ **RESOLVED**

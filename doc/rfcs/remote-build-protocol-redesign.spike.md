@@ -609,7 +609,7 @@ start time, current phase/last activity, subscriber count, bytes of log so far.
 > The prototype below is **Workstream A** of the consolidated
 > [validation plan](./remote-build-protocol-redesign.validation.md), which folds
 > in the O1–O5 acceptance criteria and sequences this against the trust tests
-> (Workstream B), the cancel matrix (Workstream C), and serve 3.0 (Workstream D).
+> (Workstream B), the cancel matrix (Workstream C), and serve diagnostic core (Workstream D).
 
 ### 4.1 The smallest end-to-end demonstration
 

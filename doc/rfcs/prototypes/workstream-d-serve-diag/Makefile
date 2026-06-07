@@ -1,4 +1,4 @@
-# Workstream D prototype — serve 3.0 diagnostic core. Throw-away build.
+# Workstream D prototype — serve diagnostic core. Throw-away build.
 # Standalone: a C++20 compiler is all it needs.
 #
 #   make         build the test binary

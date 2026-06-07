@@ -1,11 +1,11 @@
-# Draft post: serve protocol 3.0 diagnostic core — Hydra coordination
+# Draft post: serve protocol diagnostic core — Hydra coordination
 
 | | |
 |------------------|------------------------------------------------|
 | **Status**       | Draft for posting (Hydra ↔ Nix coordination thread) |
 | **Audience**     | Hydra maintainers (esp. `hydra-queue-runner`), Nix serve-protocol maintainers |
-| **Realizes**     | validation plan [Workstream D / D4](./remote-build-protocol-redesign.validation.md); decisions [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-30-freeze-rfc-q4-7-spike-51) |
-| **Goal of thread** | a *named* Hydra maintainer signs off on the serve 3.0 field set + byte order, and a `hydra-queue-runner` branch consumes it — the two blocking serve-3.0 freeze criteria |
+| **Realizes**     | validation plan [Workstream D / D4](./remote-build-protocol-redesign.validation.md); decisions [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51) |
+| **Goal of thread** | a *named* Hydra maintainer signs off on the serve diagnostic core field set + byte order, and a `hydra-queue-runner` branch consumes it — the two blocking serve diagnostic-core freeze criteria |
 
 > This is the **opening post** for the coordination thread the RFC deliberately
 > left out of its own scope (RFC §10 Q4: "the Hydra coordination *thread* itself
@@ -33,7 +33,7 @@ chooses to. **Nothing breaks for Hydra on day one**: the bump is gated behind a
 both keep working byte-for-byte at version ≤ 2.8.
 
 **Two things we need from a Hydra maintainer** (the only blockers to freezing
-serve 3.0):
+serve diagnostic core):
 
 1. **Sign off on the exact field set and byte order** below (or tell us what to
    change). We will name you as the sign-off owner in the decision record.
@@ -65,10 +65,10 @@ gets to delete code, not add it.
 
 ---
 
-## The proposed serve 3.0 surface (frozen candidate)
+## The proposed serve diagnostic core surface (frozen candidate)
 
 This is the **stable diagnostic core** from decisions
-[Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-30-freeze-rfc-q4-7-spike-51).
+[Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51).
 The **absolute minimum** that unblocks the log-fetch win is `logRef` +
 `QueryBuildLog`; `failurePhase`/`exitCode`/`logTail` are the recommended,
 low-risk companions (they also deliver "fail loud" for the non-Hydra `ssh://`
@@ -90,7 +90,7 @@ before the new tail.
 | `exitCode` | int | builder exit status |
 | `logTail` | list&lt;string&gt; | the last N log lines (the data `fixupBuilderFailureErrorMessage` embeds locally today, `derivation-building-goal.cc:1157`) |
 
-**Deferred — NOT in 3.0** (kept behind the unstable version because their
+**Deferred — NOT in the diagnostic core** (kept behind the unstable version because their
 semantics depend on the still-spiking Phase 3 dedup/coordinator design):
 `builderId`, `deduplicated`.
 
@@ -137,21 +137,21 @@ The CA-realisation fields Hydra already consumes
 > first" case breaks, and the guard in shipped clients can't be patched
 > retroactively. So the diagnostic core ships as serve **2.9** (gated `>= {2,9}`),
 > exactly like every prior serve feature; old clients negotiate `min` down to 2.8
-> and keep working. "Serve 3.0" remains the *feature* name; the *wire* version is
-> 2.9. (This corrects the earlier `(3 << 8 | 0)` framing — see decisions Blocker 3,
+> and keep working. The *wire* version is
+> **2.9** (major stays 2). (Avoids the `(3 << 8 | 0)` major bump — see decisions Blocker 3,
 > "Compatibility correction".)
 
 ---
 
-## What "frozen" requires (all four; we will not bump 3.0 until they hold)
+## What "frozen" requires (all four; we will not bump the wire version until they hold)
 
 1. **A named Hydra maintainer** has reviewed and signed off on the exact frozen
    field set and byte order. *(This thread exists to get that name.)*
 2. A **`hydra-queue-runner` branch** consumes `QueryBuildLog` + the structured
    log frames to drop its out-of-band log capture **and** reads the extended
    `BuildResult`, validated against a new-Nix builder.
-3. **Golden/characterisation tests** prove round-trip at 2.8 and 3.0 **and** that
-   a 2.8 peer ignores 3.0 fields (full back-compat matrix, both directions).
+3. **Golden/characterisation tests** prove round-trip at 2.8 and 2.9 **and** that
+   a 2.8 peer ignores 2.9 fields (full back-compat matrix, both directions).
 4. The field set has soaked on the **unstable version for ≥1 release cycle** with
    no layout change.
 
@@ -175,7 +175,7 @@ the queue-runner branch remain.
 4. **Migration appetite:** would you prefer the queue-runner branch to (a) adopt
    `QueryBuildLog` only first (smallest change), then (b) the structured
    `BuildResult` later — or both at once?
-5. **Who is the sign-off owner** for the frozen serve 3.0 layout on the Hydra
+5. **Who is the sign-off owner** for the frozen serve diagnostic core layout on the Hydra
    side?
 6. **Version number:** we propose shipping the core as serve **2.9** (minor bump,
    major stays 2) rather than `{3,0}`, because the client handshake rejects a
@@ -187,5 +187,5 @@ the queue-runner branch remain.
 ## Links
 
 - RFC: [`remote-build-protocol-redesign.md`](./remote-build-protocol-redesign.md) (esp. §4.4, §4.5, §4.8, §7)
-- Decision: [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-30-freeze-rfc-q4-7-spike-51)
+- Decision: [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51)
 - Execution/tests: [validation plan, Workstream D](./remote-build-protocol-redesign.validation.md)

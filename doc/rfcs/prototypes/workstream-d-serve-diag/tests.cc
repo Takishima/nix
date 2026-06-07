@@ -1,10 +1,10 @@
-// Workstream D prototype — serve 3.0 golden & characterisation tests (D2).
+// Workstream D prototype — serve diagnostic core golden & characterisation tests (D2).
 //
 // THROW-AWAY CODE. Encodes the guarding tests of decisions B3 §4 (RFC §9
 // "Protocol characterisation tests"):
-//   * golden serializations of BuildResult at 2.3 / 2.6 / 2.8 / 3.0;
-//   * the 2.8-reads-3.0-bytes test (2.8 reader consumes exactly the 2.8 fields;
-//     a negotiated-down peer never emits the 3.0 tail);
+//   * golden serializations of BuildResult at 2.3 / 2.6 / 2.8 / 2.9;
+//   * the 2.8-reads-2.9-bytes test (2.8 reader consumes exactly the 2.8 fields;
+//     a negotiated-down peer never emits the 2.9 tail);
 //   * a QueryBuildLog round-trip;
 //   * a "nix log over serve" functional check (Gap A / §4.5);
 //   * the full back-compat matrix, both directions, via the min() handshake.
@@ -52,7 +52,7 @@ static std::string ser(Version v, const BuildResult & r)
 
 // ---- golden bytes (generated via --dump; characterisation guard) -----------
 // If the layout changes, these must change too -- which is exactly the review
-// signal a serve-3.0 freeze needs.
+// signal a serve diagnostic-core freeze needs.
 static const char * GOLD_2_3 = "04000000000000000e000000000000006275696c646572206661696c6564000002000000000000000100000000000000e8030000000000001204000000000000";
 static const char * GOLD_2_6 = "04000000000000000e000000000000006275696c646572206661696c6564000002000000000000000100000000000000e803000000000000120400000000000001000000000000004b000000000000007368613235363a30303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030216f7574000000000080000000000000007b226964223a227368613235363a30303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030216f7574222c226f757450617468223a222f6e69782f73746f72652f616161616161616161616161616161612d666f6f227d";
 static const char * GOLD_2_8 = "04000000000000000e000000000000006275696c646572206661696c6564000002000000000000000100000000000000e8030000000000001204000000000000010000000000000003000000000000006f757400000000001f000000000000002f6e69782f73746f72652f616161616161616161616161616161612d666f6f00";
@@ -89,7 +89,7 @@ int main(int argc, char ** argv)
 {
     if (argc > 1 && std::strcmp(argv[1], "--dump") == 0) { dump(); return 0; }
 
-    std::printf("[serve-3.0] golden & characterisation tests (Blocker 3)\n");
+    std::printf("[serve diagnostic-core] golden & characterisation tests (Blocker 3)\n");
     auto r = sample();
 
     // 1. Round-trip at every version on the ladder.
@@ -104,7 +104,7 @@ int main(int argc, char ** argv)
     check(toHex(ser(V2_8, r)) == GOLD_2_8, "golden bytes stable @ 2.8");
     check(toHex(ser(V2_9, r)) == GOLD_2_9, "golden bytes stable @ 2.9");
 
-    // 3. The 3.0 layout is purely ADDITIVE: the 2.8 bytes are a prefix of the 3.0
+    // 3. The 2.9 layout is purely ADDITIVE: the 2.8 bytes are a prefix of the 2.9
     //    bytes (no existing field changes meaning).
     {
         std::string b28 = ser(V2_8, r), b30 = ser(V2_9, r);
@@ -112,8 +112,8 @@ int main(int argc, char ** argv)
               "2.9 bytes == 2.8 bytes + appended diagnostic-core tail");
     }
 
-    // 4. 2.8-reads-3.0-bytes: a 2.8 reader consumes EXACTLY the 2.8 fields and
-    //    stops before the 3.0 tail; the leftover bytes are exactly that tail.
+    // 4. 2.8-reads-2.9-bytes: a 2.8 reader consumes EXACTLY the 2.8 fields and
+    //    stops before the 2.9 tail; the leftover bytes are exactly that tail.
     {
         std::string b30 = ser(V2_9, r);
         Source src{b30};
@@ -124,7 +124,7 @@ int main(int argc, char ** argv)
         bool same28 = got28.builtOutputs == r.builtOutputs && got28.logRef.empty() && got28.logTail.empty();
         check(same28, "2.8 reader consumes exactly the 2.8 fields, no diagnostic-core fields");
         check(consumed == ser(V2_8, r).size(), "2.8 reader stops at the 2.8 boundary");
-        // the leftover tail is exactly the standalone-serialized 3.0 core
+        // the leftover tail is exactly the standalone-serialized 2.9 core
         Sink coreOnly;
         coreOnly.putString(r.logRef); coreOnly.putString(r.failurePhase);
         coreOnly.putInt(uint64_t(r.exitCode)); coreOnly.putString(r.logTail);
@@ -132,7 +132,7 @@ int main(int argc, char ** argv)
     }
 
     // 5. Negotiated-down peer never EMITS the tail. With min() handshake, a
-    //    3.0-capable Nix talking to a 2.8 Hydra serializes at 2.8 → no tail.
+    //    2.9-capable Nix talking to a 2.8 Hydra serializes at 2.8 → no tail.
     {
         Version neg = negotiate(V2_9, V2_8);            // = 2.8
         check(neg == V2_8, "min() handshake: 2.9 vs 2.8 -> 2.8");
@@ -169,7 +169,7 @@ int main(int argc, char ** argv)
     {
         LogStore store;
         store.logs[r.logRef] = "configuring...\nbuilding...\nerror: command failed\n";
-        // client (negotiated 3.0) sends QueryBuildLog{logRef}; server serves it.
+        // client (negotiated 2.9) sends QueryBuildLog{logRef}; server serves it.
         Sink req; writeQueryBuildLogRequest(req, r.logRef);
         Source reqSrc{req.buf};
         std::string got = serveQueryBuildLog(reqSrc, store);
@@ -181,7 +181,7 @@ int main(int argc, char ** argv)
     }
 
     // 8. Deferred set stays unstable: the unstable serialization is the frozen
-    //    3.0 prefix plus builderId/deduplicated -- the frozen layout is undisturbed.
+    //    2.9 prefix plus builderId/deduplicated -- the frozen layout is undisturbed.
     {
         std::string b30 = ser(V2_9, r), bU = ser(Vunstable, r);
         check(bU.size() > b30.size() && bU.compare(0, b30.size(), b30) == 0,

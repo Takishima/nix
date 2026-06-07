@@ -1,4 +1,4 @@
-# Decisions: the three blockers before the Phase 3 / serve-3.0 wire freeze
+# Decisions: the three blockers before the Phase 3 / serve diagnostic-core wire freeze
 
 | | |
 |------------------|------------------------------------------------|
@@ -11,7 +11,7 @@
 
 > This document **converges on decisions** — not options — for the three issues
 > that gate freezing any new wire surface for remote-build dedup/attach (RFC
-> Phase 3) and the extended `BuildResult` (serve 3.0). Everything here is bounded
+> Phase 3) and the extended `BuildResult` (serve diagnostic core). Everything here is bounded
 > by the three invariants the RFC and spike establish and that must not break:
 > (1) the **trust model** (RFC §6) — dedup must never become a cross-tenant
 > log/result/existence oracle; (2) **no Hydra/Nix flag day** — every change is
@@ -255,13 +255,13 @@ wire status**.
 
 ---
 
-## Blocker 3 — The Hydra field set & serve-3.0 freeze (RFC Q4, §7, spike §5.1)
+## Blocker 3 — The Hydra field set & serve diagnostic-core freeze (RFC Q4, §7, spike §5.1)
 
 ### 1. Decision
 
 Split the extended `BuildResult` into a **stable diagnostic core** and a
 **deferred dedup/fleet-observability set**, and freeze only the former for serve
-3.0. The **stable core** (the smallest set that lets `hydra-queue-runner` retire
+2.9. The **stable core** (the smallest set that lets `hydra-queue-runner` retire
 its out-of-band log handling and report failures structurally) is: `logRef` (the
 resolved drv path the builder asserts it persisted the log under, the key
 `LogStore::getBuildLog` already uses), structured failure detail
@@ -277,35 +277,35 @@ low-risk companions that also deliver fail-loud (G8) for non-Hydra serve clients
 Serialization **extends the existing conditional, version-gated serve
 serializer ladder** (`serve-protocol.cc:29-96`, the `>= {2,3}/{2,6}/{2,8}`
 pattern): new fields are appended **after** the 2.8 `builtOutputs` block under a
-`>= {3,0}` guard, in **binary length-prefixed** form (not JSON — JSON is used
+`>= {2,9}` guard, in **binary length-prefixed** form (not JSON — JSON is used
 only for the pre-existing 2.6 realisation back-compat hack), so a 2.8 reader
 stops before them and **no existing field changes meaning**; the CA realisation
 fields Hydra already consumes (`std::map<OutputName, UnkeyedRealisation>` at 2.8)
 are untouched. `QueryBuildLog` is a **new `Command` enum value (`= 10`, the next
 free number after `AddToStoreNar = 9`)**, never sent unless the negotiated
-version supports it. **`SERVE_PROTOCOL_VERSION` is NOT bumped to `(3 << 8 | 0)`
+version supports it. **`SERVE_PROTOCOL_VERSION` is NOT bumped to `(2 << 8 | 9)`
 until the freeze criteria below are met**; until then the fields live behind an
 explicitly-unstable provisional gate whose byte layout is *not* a back-compat
 promise.
 
-**Freeze criteria for serve 3.0 (all must hold):**
+**Freeze criteria for serve diagnostic core (all must hold):**
 1. A **named Hydra maintainer** has reviewed and signed off on the exact frozen
    field set and byte order.
 2. A `hydra-queue-runner` branch (a) consumes `QueryBuildLog` + the structured
    log frames (§4.2) to **drop its out-of-band log capture**, and (b) reads the
    extended `BuildResult`, both validated against a new-Nix builder.
 3. **Golden/characterisation serialization tests** (`src/libstore-tests`,
-   `src/json-schema-checks`) prove round-trip at 2.8 and 3.0 **and** that a 2.8
-   peer ignores 3.0 fields — the full back-compat matrix, both directions.
+   `src/json-schema-checks`) prove round-trip at 2.8 and 2.9 **and** that a 2.8
+   peer ignores 2.9 fields — the full back-compat matrix, both directions.
 4. The field set has been carried on the **unstable version for ≥1 release
    cycle** with no layout change.
 
-Only then bump `SERVE_PROTOCOL_VERSION` to `(3 << 8 | 0)` and treat the layout
+Only then bump `SERVE_PROTOCOL_VERSION` to `(2 << 8 | 9)` and treat the layout
 as frozen.
 
 ### 2. Rejected alternatives
 
-- **Freeze the full field set (incl. `builderId`/`deduplicated`) as 3.0 now.**
+- **Freeze the full field set (incl. `builderId`/`deduplicated`) as 2.9 now.**
   Rejected: their meaning depends on the unfrozen Phase 3 coordinator/dedup
   design; freezing a byte layout for semantics still in spike risks a later
   Hydra/Phase-3-driven change breaking the very back-compat §7 promises — exactly
@@ -314,9 +314,21 @@ as frozen.
   length-prefixed; JSON is present only as a 2.6 realisation compat shim
   (`serve-protocol.cc:81-95`). New scalar/string fields (`exitCode`,
   `failurePhase`, `logRef`, `logTail`) serialize natively and cheaper as binary.
-- **Bump `SERVE_PROTOCOL_VERSION` to 3.0 immediately to start using the
-  fields.** Rejected: a shipped 3.0 layout is a permanent back-compat promise
+- **Bump `SERVE_PROTOCOL_VERSION` to 2.9 immediately to start using the
+  fields.** Rejected: a shipped 2.9 layout is a permanent back-compat promise
   (§7). Prototype behind an unstable gate first; bump only at freeze.
+- **Bump the serve *major* version (to `(3 << 8 | 0)` / "3.0").** **Rejected —
+  this is the decision recorded here.** The serve *client* handshake hard-rejects
+  a server whose major differs, **before** `min()`
+  (`serve-protocol-connection.cc:18`), and that guard is baked immutably into
+  every already-shipped client. Since the builder is the server and Hydra/`nix`
+  is the client, a major-3 builder breaks every deployed client (old client →
+  upgraded builder) — a real regression `min()` cannot save, and no feature flag
+  can fix retroactively. **Decision: the diagnostic core ships as a *minor* bump
+  within major 2 (`(2 << 8 | 9)`), exactly like every prior serve feature.** A
+  genuine major bump is deferred to a future breaking change, and only after a
+  guard-relaxing client release has propagated for ≥1 cycle. See §3
+  ("Compatibility correction") for the full reasoning and the guarding test.
 - **Make Hydra adopt the new log channel as a precondition of Phase 1.**
   Rejected: violates "Hydra is never forced" (G7). The path is additive and
   opt-in; Hydra adopts when it chooses, and `min()` fallback keeps old Hydra
@@ -329,10 +341,10 @@ as frozen.
 
 ### 3. What it commits
 
-- **Wire layout (frozen at 3.0):** the append-after-2.8-`builtOutputs`,
-  `>= {3,0}`-gated, binary order of `logRef`, `failurePhase`, `exitCode`,
+- **Wire layout (frozen at 2.9):** the append-after-2.8-`builtOutputs`,
+  `>= {2,9}`-gated, binary order of `logRef`, `failurePhase`, `exitCode`,
   `logTail` in the `BuildResult` serializer; and `QueryBuildLog` as
-  `Command = 10`. Once 3.0 ships this is a back-compat promise.
+  `Command = 10`. Once 2.9 ships this is a back-compat promise.
 - **Semantics:** `logRef` = the resolved drv path under which the builder
   asserts the log is persisted (`LogStore::getBuildLog` key); structured failure
   = phase/exit/tail as *fields*, not baked into the message string.
@@ -342,8 +354,8 @@ as frozen.
 
   | Client | Server | Negotiated | Behaviour |
   |---|---|---|---|
-  | new Hydra (client, ≥3.0) | old Nix builder (server, ≤2.8) | 2.8 | Hydra falls back to out-of-band log capture; `QueryBuildLog` not sent ✅ |
-  | new | new | 3.0 | full diagnostic core active ✅ |
+  | new Hydra (client, ≥2.9) | old Nix builder (server, ≤2.8) | 2.8 | Hydra falls back to out-of-band log capture; `QueryBuildLog` not sent ✅ |
+  | new | new | 2.9 | full diagnostic core active ✅ |
 
 > **Compatibility correction (2026-06) — the version number must stay in major
 > 2; do *not* bump to `(3 << 8 | 0)`.** The `min()` handshake only protects
@@ -362,8 +374,8 @@ as frozen.
 > **Resolution:** ship the diagnostic core as a **minor bump within major 2**
 > (next free minor — `SERVE_PROTOCOL_VERSION = (2 << 8 | 9)`), gated `>= {2,9}`,
 > exactly as every prior serve feature has been. Then old client → new builder
-> negotiates `min({2,8},{2,9}) = {2,8}` and works unchanged. "Serve 3.0" stays
-> the *feature* name in this document; the *wire* version is **2.9**. A genuine
+> negotiates `min({2,8},{2,9}) = {2,8}` and works unchanged. The wire
+> version is **2.9** (major stays 2). A genuine
 > major bump is deferred to a future breaking change, and only after a
 > guard-relaxing client release has propagated for ≥1 cycle. The corrected
 > first matrix row:
@@ -375,7 +387,7 @@ as frozen.
 
 ### 4. Residual risk and the guarding test
 
-- **Risk:** freezing 3.0 before Hydra's branch is proven could still miss a field
+- **Risk:** freezing the core before Hydra's branch is proven could still miss a field
   Hydra needs. Mitigated by freeze criterion 2 (a working queue-runner branch is
   a *precondition* of the freeze) and criterion 4 (a soak cycle on the unstable
   version).
@@ -391,10 +403,10 @@ as frozen.
   (`{2,9}`), so it negotiates down transparently like every prior serve feature;
   a real major bump is deferred behind a propagated guard-relaxing release.
 - **Guarding test (RFC §9 "Protocol characterisation tests"):** golden
-  serializations of `BuildResult` at 2.3/2.6/2.8/3.0 and of a `QueryBuildLog`
-  round-trip; an explicit **2.8-reads-3.0-bytes** test asserting the 2.8 reader
+  serializations of `BuildResult` at 2.3/2.6/2.8/2.9 and of a `QueryBuildLog`
+  round-trip; an explicit **2.8-reads-2.9-bytes** test asserting the 2.8 reader
   consumes exactly the 2.8 fields and the negotiated-down peer never emits the
-  3.0 tail; plus a functional test that `nix log` over the serve path returns the
+  2.9 tail; plus a functional test that `nix log` over the serve path returns the
   real log via `QueryBuildLog` (Gap A/§4.5); **and a handshake test that an
   old client (`major == 2` guard) reaching a `{2,9}` builder negotiates `{2,8}`
   and connects — the regression a `{3,0}` major bump would cause.**
@@ -408,7 +420,7 @@ as frozen.
 - **Follow-up:** open the Hydra coordination thread (RFC Q4 says coordination is
   out of scope of the RFC itself); land the characterisation tests and the
   unstable-version implementation of the diagnostic core in Phase 1; **do not bump
-  `SERVE_PROTOCOL_VERSION` to 3.0 until the four freeze criteria are met.**
+  `SERVE_PROTOCOL_VERSION` to 2.9 until the four freeze criteria are met.**
 
 ---
 
@@ -418,7 +430,7 @@ as frozen.
 > coordinator process is deployed, owned, and reaped*, not the public protocol.
 > It builds on the settled coordinator interface (spike §3) and does not reopen
 > it. It changes **no public wire** (the coordinator is below the wire, spike
-> §5.1), so it does **not** gate the Phase 3 / serve-3.0 freeze; it is recorded
+> §5.1), so it does **not** gate the Phase 3 / serve diagnostic-core freeze; it is recorded
 > here so the coordinator can be implemented without a further design round.
 
 ### 1. Decision
@@ -545,7 +557,7 @@ listener.** Concretely:
 ## Operational decision O2 — Coordinator crash-recovery posture (spike §6 Q5)
 
 > Like O1, an **operational** decision with **no public-wire** surface, so it
-> does not gate the Phase 3 / serve-3.0 freeze. It answers the question O1
+> does not gate the Phase 3 / serve diagnostic-core freeze. It answers the question O1
 > explicitly deferred ("must builds survive a coordinator/daemon restart?").
 
 ### 1. Decision
@@ -947,19 +959,19 @@ hard-cap `maxJobs` semantics unchanged. Lands in **Phase 6**.
 - **Trust model and no-flag-day preserved?** Yes. Blocker 1 *is* the trust
   decision (per-observable, re-derived, existence-oracle-proof). Blocker 2 adds
   no wire surface. Blocker 3 is additive and `min()`-gated in both directions; the
-  3.0 layout is frozen only after the back-compat matrix is proven by golden
+  2.9 layout is frozen only after the back-compat matrix is proven by golden
   tests.
 - **Minimum to freeze now vs. behind an unstable version?** *Freeze now:* the
   **build-key definition** and **per-observable authorization rule** (Blocker 1)
   — they define what "the same build" means and who may observe it, and are
-  expensive to change later. *Freeze with Hydra:* the serve 3.0 **diagnostic
+  expensive to change later. *Freeze with Hydra:* the serve diagnostic core **diagnostic
   core** (`logRef`, `failurePhase`, `exitCode`, `logTail`, `QueryBuildLog`).
   *Stay unstable:* `builderId`, `deduplicated`, and the CA `resolving`-merge wire
   details, all bound to the still-spiking Phase 3 coordinator. Blocker 2 freezes
   *no* wire (coordinator-internal) but its table is agreed before Phase 3 code.
 - **Test that proves each (per RFC §9):** B1 → trust tests (existence-oracle,
   CA-merge re-auth, key-spoof); B2 → the `build-dedup-cancel` matrix; B3 →
-  characterisation/golden serializations + the 2.8-reads-3.0 back-compat test +
+  characterisation/golden serializations + the 2.8-reads-2.9 back-compat test +
   the serve-path `nix log` functional test.
 
 ## Decision summary / owners
@@ -968,4 +980,4 @@ hard-cap `maxJobs` semantics unchanged. Lands in **Phase 6**.
 |---|---|---|---|---|
 | 1 — CA key-merge trust | Key = hash of client-resolved drv (coordinator-derived); per-observable authz re-derived per-subscriber against the resolved key, before registry lookup; no existence oracle; `resolving` merge re-authorizes at promotion | **Yes** (key + authz rule) | Security reviewer + libstore/protocol | ✅ CA `resolving`→promote prototype + trust tests **done** (T1–T3 green, Workstream B; [validation.md](./remote-build-protocol-redesign.validation.md)) |
 | 2 — Refcounted cancel | Lifetime = refcount + explicit-root only; no originator privilege; per-subscriber timeout under a max envelope; keep-failed = OR; cancel = scoped unsubscribe-with-error | No wire (coordinator-internal); table agreed pre-Phase-3 | libstore/protocol | ✅ `hasRootReasonToContinue` + per-subscriber deadlines + `build-dedup-cancel` matrix **done** (C-a…C-f green, Workstream C) |
-| 3 — Hydra / serve 3.0 | Freeze diagnostic core (`logRef`, phase/exit/tail, `QueryBuildLog`); defer `builderId`/`deduplicated` to unstable; bump to 3.0 only on the four freeze criteria | Diagnostic core, gated by Hydra sign-off | Hydra queue-runner maintainer (TBD) + libstore/serve-protocol | ⏳ characterisation tests **done** (D2/D3.3 green, Workstream D); Hydra coordination thread + soak on unstable still owed (D3.1/D3.2/D3.4, external) |
+| 3 — Hydra / serve diagnostic core | Freeze diagnostic core (`logRef`, phase/exit/tail, `QueryBuildLog`); defer `builderId`/`deduplicated` to unstable; bump to 2.9 only on the four freeze criteria | Diagnostic core, gated by Hydra sign-off | Hydra queue-runner maintainer (TBD) + libstore/serve-protocol | ⏳ characterisation tests **done** (D2/D3.3 green, Workstream D); Hydra coordination thread + soak on unstable still owed (D3.1/D3.2/D3.4, external) |

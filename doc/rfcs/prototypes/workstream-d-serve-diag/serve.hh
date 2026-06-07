@@ -1,4 +1,4 @@
-// Workstream D prototype — serve 3.0 diagnostic core (deliverable D1).
+// Workstream D prototype — serve diagnostic core (deliverable D1).
 //
 // THROW-AWAY CODE. Independent of the coordinator prototype (A/B/C): this models
 // the *serve protocol* between Hydra and Nix, per Blocker 3 (decisions §"Blocker
@@ -144,7 +144,7 @@ struct BuildResult {
     // >= {2,8} binary (>= {2,6} JSON-hack): outputName -> outPath
     std::map<std::string, std::string> builtOutputs;
 
-    // >= {3,0} — the FROZEN diagnostic core (decisions B3 §3)
+    // >= {2,9} — the FROZEN diagnostic core (decisions B3 §3)
     std::string logRef;        // resolved drv path the builder persisted the log under
     std::string failurePhase;  // "" if not a failure / unknown
     int64_t     exitCode = 0;
@@ -184,7 +184,7 @@ inline void write(Sink & to, Version v, const BuildResult & res)
     }
 
     // Diagnostic core, appended AFTER builtOutputs, binary, gated >= {2,9}
-    // (the compatible wire version; "3.0" is only the feature name).
+    // (the compatible wire version; major stays 2).
     if (v >= V2_9) {
         to.putString(res.logRef);
         to.putString(res.failurePhase);
@@ -257,7 +257,7 @@ inline std::string toHex(std::string_view b)
 // ---- QueryBuildLog (Command = 10) ------------------------------------------
 //
 // Models the Gap A / §4.5 fix: `getBuildLogExact` over the serve path. A client
-// at a negotiated version >= {3,0} may send QueryBuildLog{drvPath}; the server
+// at a negotiated version >= {2,9} may send QueryBuildLog{drvPath}; the server
 // replies with the persisted log bytes (or empty if none). A negotiated-down
 // (<= 2.8) client must NOT send it and falls back to out-of-band capture.
 

@@ -6,7 +6,7 @@
 | **Parent**       | [`remote-build-protocol-redesign.md`](./remote-build-protocol-redesign.md) |
 | **Decisions**    | [`*.decisions.md`](./remote-build-protocol-redesign.decisions.md) (Blockers 1–3, O1–O7) |
 | **Spike**        | [`*.spike.md`](./remote-build-protocol-redesign.spike.md) (§4 prototype) |
-| **Prototypes**   | [`prototypes/workstream-a-coordinator/`](./prototypes/workstream-a-coordinator/) (A+B+C) · [`prototypes/workstream-d-serve30/`](./prototypes/workstream-d-serve30/) (D) |
+| **Prototypes**   | [`prototypes/workstream-a-coordinator/`](./prototypes/workstream-a-coordinator/) (A+B+C) · [`prototypes/workstream-d-serve-diag/`](./prototypes/workstream-d-serve-diag/) (D) |
 
 > Every *design* question is decided (Blockers 1–3, O1–O7). What remains is
 > **execution, not clarification**: prototypes, tests, and one external
@@ -27,11 +27,11 @@
 > |---|---|---|
 > | **F-INT** | ✅ **Freezable now** — no remaining gate | — (the §3 internal coordinator interface is fully validated by Workstream A; productionizing it in `libstore`/`daemon` is Phase 3 *implementation*, not a freeze gate) |
 > | **F-WIRE** | ⏳ **Nix-side cleared**, freeze still blocked | the **Hydra field set** for the public Build Session additions (RFC §7 / Q4) — external; T1–T3 (B) and C-a…C-f (C) are green |
-> | **F-SERVE30** | ⏳ **Layout + back-compat proven**, freeze still blocked | **D3.1** named-maintainer sign-off, **D3.2** queue-runner branch, **D3.4** ≥1-cycle soak — all external/time-gated; D1/D2/D3.3 proven in-prototype (D3.3 still owes a port into `libstore-tests`). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
+> | **F-SERVE-DIAG** | ⏳ **Layout + back-compat proven**, freeze still blocked | **D3.1** named-maintainer sign-off, **D3.2** queue-runner branch, **D3.4** ≥1-cycle soak — all external/time-gated; D1/D2/D3.3 proven in-prototype (D3.3 still owes a port into `libstore-tests`). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
 >
-> The honest one-liner: **F-INT resolves now; F-WIRE and F-SERVE30 have their
+> The honest one-liner: **F-INT resolves now; F-WIRE and F-SERVE-DIAG have their
 > engineering preconditions discharged but cannot freeze until Hydra coordinates
-> and (for serve 3.0) the field set soaks** — exactly the external long pole D4
+> and (for serve diagnostic core) the field set soaks** — exactly the external long pole D4
 > exists to start.
 
 ## 0. The three freezes this plan gates (and why they are distinct)
@@ -43,9 +43,9 @@ different evidence and can happen at different times:
 |---|---|---|---|
 | **F-INT** — Phase 3 *internal* coordinator interface (spike §3) | the child↔coordinator control protocol, registry, replay/refcount semantics | **No** (machine-internal) | Workstream **A** |
 | **F-WIRE** — Phase 3 *public* Build Session surface | the worker/serve additions for attach / `deduplicated` / `QueryActiveBuilds` | **Yes** (additive, version-gated) | Workstreams **B** + **C** proven, *and* RFC §7/Q4 (Hydra field set) |
-| **F-SERVE30** — serve 3.0 diagnostic core (Blocker 3) | `logRef`, `failurePhase`/`exitCode`/`logTail`, `QueryBuildLog`; bump `SERVE_PROTOCOL_VERSION` to `(3<<8\|0)` | **Yes** | Workstream **D** (the four Blocker-3 criteria) |
+| **F-SERVE-DIAG** — serve diagnostic core (Blocker 3) | `logRef`, `failurePhase`/`exitCode`/`logTail`, `QueryBuildLog`; bump `SERVE_PROTOCOL_VERSION` to `(2<<8\|9)` | **Yes** | Workstream **D** (the four Blocker-3 criteria) |
 
-Key independence: **F-SERVE30 does not need the coordinator.** The serve
+Key independence: **F-SERVE-DIAG does not need the coordinator.** The serve
 diagnostic core (Phases 0–1) is orthogonal to dedup/attach, so Workstream D can
 run fully in parallel with A/B/C. The operational fixes (Gaps A/B/C, Phases
 0–2/4) gate on **nothing here** and ship first.
@@ -176,7 +176,7 @@ table must be implemented and tested before Phase 3 *implementation* is trusted.
 
 ---
 
-## Workstream D — serve 3.0 diagnostic core + Hydra coordination  → gates **F-SERVE30**  [Blocker 3]
+## Workstream D — serve diagnostic core + Hydra coordination  → gates **F-SERVE-DIAG**  [Blocker 3]
 
 Independent of A/B/C. D1/D2 can land now behind the **unstable** version; D3/D4
 are the gate to bumping `SERVE_PROTOCOL_VERSION`.
@@ -185,15 +185,15 @@ are the gate to bumping `SERVE_PROTOCOL_VERSION`.
 
 - **D1 — diagnostic core behind the unstable version:** `logRef`,
   `failurePhase`/`exitCode`/`logTail` appended after the 2.8 `builtOutputs` block
-  under a `>= {3,0}` guard (binary, not JSON); `QueryBuildLog` as `Command = 10`
+  under a `>= {2,9}` guard (binary, not JSON); `QueryBuildLog` as `Command = 10`
   (decisions B3 §3). `builderId`/`deduplicated` stay deferred/unstable.
 - **D2 — golden/characterisation tests** (decisions B3 §4): round-trip
-  `BuildResult` at 2.3/2.6/2.8/3.0; an explicit **2.8-reads-3.0-bytes** test
+  `BuildResult` at 2.3/2.6/2.8/2.9; an explicit **2.8-reads-2.9-bytes** test
   (2.8 reader consumes exactly the 2.8 fields; a negotiated-down peer never emits
-  the 3.0 tail); a `QueryBuildLog` round-trip; a functional test that `nix log`
+  the 2.9 tail); a `QueryBuildLog` round-trip; a functional test that `nix log`
   over the serve path returns the real log (Gap A/§4.5).
 
-**The four freeze criteria** (Blocker 3 — *all* must hold to bump to 3.0):
+**The four freeze criteria** (Blocker 3 — *all* must hold to bump to 2.9):
 
 - [ ] **D3.1** — a **named** Hydra queue-runner maintainer has reviewed and
   signed off on the exact field set and byte order. *(Naming them is the first
@@ -201,8 +201,8 @@ are the gate to bumping `SERVE_PROTOCOL_VERSION`.
 - [ ] **D3.2** — a `hydra-queue-runner` branch (a) consumes `QueryBuildLog` + the
   structured log frames to **drop its out-of-band log capture**, and (b) reads
   the extended `BuildResult`, both validated against a new-Nix builder.
-- [ ] **D3.3** — D2's golden tests prove round-trip at 2.8 and 3.0 **and** that a
-  2.8 peer ignores 3.0 fields (full back-compat matrix, both directions).
+- [ ] **D3.3** — D2's golden tests prove round-trip at 2.8 and 2.9 **and** that a
+  2.8 peer ignores 2.9 fields (full back-compat matrix, both directions).
 - [ ] **D3.4** — the field set has soaked on the **unstable version for ≥1
   release cycle** with no layout change.
 
@@ -218,11 +218,11 @@ are the gate to bumping `SERVE_PROTOCOL_VERSION`.
 maintainer (serializer + version bump).
 
 > **Prototype: ✅ D1/D2 done; D3.3 proven standalone.**
-> [`prototypes/workstream-d-serve30/`](./prototypes/workstream-d-serve30/)
+> [`prototypes/workstream-d-serve-diag/`](./prototypes/workstream-d-serve-diag/)
 > mirrors the `serve-protocol.cc` version-gated ladder and appends the frozen
-> 3.0 diagnostic core under a `>= {3,0}` guard. `make check` is green across 21
-> golden/characterisation tests: round-trip at 2.3/2.6/2.8/3.0, exact golden
-> bytes, additive layout, **2.8-reads-3.0-bytes**, negotiated-down emits no
+> diagnostic core under a `>= {2,9}` guard. `make check` is green across 21
+> golden/characterisation tests: round-trip at 2.3/2.6/2.8/2.9, exact golden
+> bytes, additive layout, **2.8-reads-2.9-bytes**, negotiated-down emits no
 > tail, the back-compat matrix **both directions**, `QueryBuildLog` round-trip
 > (`nix log` over serve), and the deferred `builderId`/`deduplicated` staying
 > behind the unstable gate. This *is* D3.3's proof, but standalone — the literal
@@ -241,7 +241,7 @@ Workstream A ──► F-INT (freeze internal coordinator iface)
       └─► Workstream B (T1–T3) ─┐
       └─► Workstream C (C1+matrix) ─┴─► (with RFC §7 Hydra field set) ──► F-WIRE
 
-Workstream D:  D1+D2 (now, behind unstable) ──► D3.1…D3.4 + D4 ──► F-SERVE30
+Workstream D:  D1+D2 (now, behind unstable) ──► D3.1…D3.4 + D4 ──► F-SERVE-DIAG
                                                  (D is parallel to A/B/C)
 ```
 
@@ -267,7 +267,7 @@ blocked on the external Hydra field set.
 - [ ] Hydra field set for the public Build Session additions agreed (RFC §7) —
   **external; the one remaining F-WIRE gate.**
 
-**Bump `SERVE_PROTOCOL_VERSION` → `(3<<8|0)` (F-SERVE30):** ⏳ layout + back-compat
+**Bump `SERVE_PROTOCOL_VERSION` → `(2<<8|9)` (F-SERVE-DIAG):** ⏳ layout + back-compat
 proven; blocked on external sign-off + soak.
 - [x] D1 implemented behind unstable (modelled); D2 golden/characterisation
   tests green (Workstream D prototype, `make check`).
@@ -284,4 +284,4 @@ proven; blocked on external sign-off + soak.
 | A — coordination prototype | F-INT | libstore/daemon |
 | B — CA-merge trust tests | F-WIRE precond. | security reviewer + libstore/protocol |
 | C — refcounted cancel | (no wire) pre-Phase-3 impl | libstore/protocol |
-| D — serve 3.0 + Hydra | F-SERVE30 | Hydra queue-runner maint. (TBD) + libstore/serve-protocol |
+| D — serve diagnostic core + Hydra | F-SERVE-DIAG | Hydra queue-runner maint. (TBD) + libstore/serve-protocol |

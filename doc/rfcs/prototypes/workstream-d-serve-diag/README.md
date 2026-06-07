@@ -1,7 +1,7 @@
-# Workstream D prototype — serve 3.0 diagnostic core
+# Workstream D prototype — serve diagnostic core
 
 > **Status:** throw-away validation prototype.
-> **Gates:** freeze **F-SERVE30** (bump `SERVE_PROTOCOL_VERSION` → `3.0`).
+> **Gates:** freeze **F-SERVE-DIAG** (bump `SERVE_PROTOCOL_VERSION` → `2.9`).
 > **Independent of A/B/C** (the coordinator): this is about the *serve protocol*
 > between Hydra and Nix, which is orthogonal to dedup/attach.
 > **Parent:** [`../../remote-build-protocol-redesign.validation.md`](../../remote-build-protocol-redesign.validation.md)
@@ -60,14 +60,14 @@ make dump    # print golden hex (to regenerate the constants in tests.cc)
 
 | Test | Asserts |
 |---|---|
-| round-trip @ 2.3 / 2.6 / 2.8 / 3.0 | each version serializes and reads back exactly (consumes all bytes) |
+| round-trip @ 2.3 / 2.6 / 2.8 / 2.9 | each version serializes and reads back exactly (consumes all bytes) |
 | golden bytes @ each version | exact byte layout is stable (characterisation guard — any layout drift fails the test, which is the review signal a freeze needs) |
-| additive layout | the 3.0 bytes are the 2.8 bytes **+ appended tail**: no existing field changes meaning |
-| **2.8-reads-3.0-bytes** | a 2.8 reader consumes exactly the 2.8 fields and stops at the boundary; the leftover bytes are exactly the 3.0 diagnostic-core tail |
-| negotiated-down emits no tail | with the `min()` handshake, a 3.0 Nix talking to a 2.8 peer serializes at 2.8 — no 3.0 tail, `QueryBuildLog` not offered |
-| back-compat matrix (both directions) | old Hydra↔new Nix → 2.8; new Hydra↔old Nix → 2.8; new↔new → 3.0 with the core active |
-| `QueryBuildLog` round-trip | a 3.0 client fetches the **real persisted log** (`nix log` over serve works — Gap A / §4.5); an unknown drv yields empty, not an error |
-| deferred set stays unstable | `builderId`/`deduplicated` append **after** the frozen 3.0 core, leaving the frozen prefix undisturbed |
+| additive layout | the 2.9 bytes are the 2.8 bytes **+ appended tail**: no existing field changes meaning |
+| **2.8-reads-2.9-bytes** | a 2.8 reader consumes exactly the 2.8 fields and stops at the boundary; the leftover bytes are exactly the diagnostic-core tail |
+| negotiated-down emits no tail | with the `min()` handshake, a 2.9 Nix talking to a 2.8 peer serializes at 2.8 — no 2.9 tail, `QueryBuildLog` not offered |
+| back-compat matrix (both directions) | old Hydra↔new Nix → 2.8; new Hydra↔old Nix → 2.8; new↔new → 2.9 with the core active |
+| `QueryBuildLog` round-trip | a 2.9 client fetches the **real persisted log** (`nix log` over serve works — Gap A / §4.5); an unknown drv yields empty, not an error |
+| deferred set stays unstable | `builderId`/`deduplicated` append **after** the frozen 2.9 core, leaving the frozen prefix undisturbed |
 
 ## Back-compat matrix (decisions B3 §3)
 
@@ -80,7 +80,7 @@ make dump    # print golden hex (to regenerate the constants in tests.cc)
 
 ## What this does NOT do (out of scope / external)
 
-The four **freeze criteria** for serve 3.0 are gates this code cannot satisfy by
+The four **freeze criteria** for serve diagnostic core are gates this code cannot satisfy by
 itself — they are the point of the workstream's external dependency:
 
 - **D3.1** — a *named* Hydra queue-runner maintainer signs off on the exact field
@@ -94,7 +94,7 @@ itself — they are the point of the workstream's external dependency:
 - **D3.4** — the field set soaks on the **unstable** version for ≥1 release cycle
   with no layout change.
 
-Only when all four hold does `SERVE_PROTOCOL_VERSION` bump to `(3 << 8 | 0)` and
+Only when all four hold does `SERVE_PROTOCOL_VERSION` bump to `(2 << 8 | 9)` and
 the layout become a back-compat promise.
 
 ## Faithful vs. modelled
