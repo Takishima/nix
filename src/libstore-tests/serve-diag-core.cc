@@ -41,7 +41,12 @@
 
 #include "nix/store/serve-protocol.hh"
 
-namespace nix {
+// NOTE: this lives in its own namespace, *not* `nix`, on purpose. The production
+// `serve-protocol.hh` transitively defines `nix::Sink`, `nix::Source`, and
+// `nix::BuildResult`; the self-contained model below intentionally reuses those
+// names, so being inside `nix` would make every unqualified use ambiguous. Only
+// `SERVE_PROTOCOL_VERSION` (a macro) is borrowed from the real header.
+namespace serve_diag_core_test {
 
 // The whole point of staying unbumped: this port lands as test code *without*
 // advancing the wire version. If someone bumps the real version, this assert
@@ -497,4 +502,4 @@ TEST(ServeDiagCore, deferredSetAppendsAfterFrozenCore)
         << "unstable builderId/deduplicated append AFTER the frozen 2.9 core";
 }
 
-} // namespace nix
+} // namespace serve_diag_core_test
