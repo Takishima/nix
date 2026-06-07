@@ -781,7 +781,8 @@ The only ever client-visible effects of this future layer — cross-node /
 cross-restart **re-attach** (§4.7.4) and an optional **reuse-provenance**
 value on `BuildResult` (§4.4) — both ride the existing version-gated extension
 mechanism (append-after-guard under the unstable version, §7), so the
-persistence work never forces a wire break.
+persistence work never forces a wire break. The implementation guardrails
+that keep each phase from foreclosing this extension are collected in §8.1.
 
 ### 4.4 Extended `BuildResult` and durable diagnostics (G2)
 
@@ -1339,6 +1340,75 @@ the log fixes.
   fully-featured distributed-build transport (native streaming + dedup),
   keep the serve protocol as the documented compatibility/Hydra surface
   (kept additive throughout per §4.8 / **G7**).
+
+### 8.1 Forward-compatibility guardrails (don't foreclose the elastic backend)
+
+The phases above deliver value on the stock daemon long before any elastic
+backend (§4.3.4) exists. The risk is that, in doing so, an implementer bakes
+in a single-machine assumption that an elastic backend could never undo. None
+of these guardrails costs the stock-daemon work anything — each is "write it
+against the abstraction you were going to need anyway" — but each, if violated,
+is expensive to retrofit. **They are normative for implementation review**; each
+maps to an existing decision, so none is new policy.
+
+1. **Key on the resolved derivation — never on a store path or the
+   input-addressed drv path.** Every dedup / lookup / `logRef` site keys on
+   `hash(resolved drv)` (Blocker 1, §4.3.5 seam 4). A store-path-as-key shortcut
+   "works" on the stock daemon and silently breaks CA coalescing and global
+   reuse. *Phases 0, 3, 6.*
+
+2. **Program coordination against the registry interface, not its transport.**
+   The registry operations (§4.3.5 seam 1) must not inline the Unix-socket /
+   `SO_PEERCRED` / same-host assumption at call sites. Authentication is a
+   **pluggable policy** (peer-cred for the local coordinator, mTLS/identity for
+   a network control plane, §4.3.4); the authorization check (§6) is the same
+   code either way. *Spike / Phase 3.*
+
+3. **Route cancellation through a refcount, even when the count is always 1.**
+   Do not add new code that assumes "client disconnect ⇒ kill this build"
+   (`MonitorFdHup` → `triggerInterrupt`, spike §1.5). Send disconnect through
+   the refcounted-unsubscribe abstraction (§4.3, Blocker 2) so re-attach and
+   fan-out stay possible; on the stock daemon pre-coordinator the refcount is
+   trivially 1 and behaviour is unchanged. *Phases 2, 3, 6.*
+
+4. **Don't deepen client-side slot locking; keep the elastic opt-out a real
+   branch.** The hook's per-machine file locks and fixed `maxJobs`
+   (`build-remote.cc:40-43,151-177`) stay behind the O7 opt-in branch and must
+   not become load-bearing for the streaming/dedup paths. New work must not make
+   "one synchronous build per connection / per slot" an assumption anything else
+   relies on. *Phases 1, 2, 6.*
+
+5. **Tag every build's activities/log from the start — single-build included.**
+   Implement the per-build top-level activity + `ActivityId → build id` index
+   (§4.2) even while only one build is ever in flight. Skipping it because
+   "there's only one build right now" turns many-builds-per-endpoint (the
+   elastic core, §4.7, requirement 2) into a retrofit instead of a no-op.
+   *Phases 2, 3.*
+
+6. **Never assume the build ran on the same host/store as the connection.**
+   `logRef` / `QueryBuildLog` resolve by derivation key, not by a local
+   `LogStore` path (§4.5, §4.6); the result and copy-back paths must tolerate a
+   remote, per-builder build store. Do **not** make shared-store output
+   `PathLocks` the *only* correctness mechanism — keep dedup correctness
+   expressible via the registry alone, so per-pod stores (§4.3.4) stay viable.
+   *Phases 0, 4.*
+
+7. **Keep the serve diagnostic-core freeze append-only and the elastic fields
+   deferred.** New `BuildResult` fields go *after* the version guard (§7); the
+   elastic-defined fields (`builderId`, `deduplicated`, reuse-provenance, and
+   the §4.4 transient/resource-hint) stay behind the unstable version until
+   their semantics settle (Blocker 3). Freezing them prematurely is the one
+   mistake §7 cannot walk back. *Phase 0/1 wire, Phase 3+.*
+
+8. **No global mutable state a later key-sharded coordinator couldn't split.**
+   O4 ships a single event loop but defers key-sharding; don't introduce
+   process-wide singletons keyed on anything but the build key that would block
+   that split. *Phase 3.*
+
+The one sentence an implementer should carry: **write to the resolved-drv key
+and the registry interface, route cancel through a refcount, keep new wire
+fields append-only and deferred — and the elastic backend stays a pure
+addition.**
 
 ## 9. Testing strategy
 
