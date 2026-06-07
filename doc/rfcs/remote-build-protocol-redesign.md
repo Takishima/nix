@@ -484,7 +484,11 @@ phases, `--log-format internal-json`, etc.).
 Introduce a server-side **Build Registry** that maps a **build key** to a
 live **Build**, owned by whatever component actually schedules builds for
 the endpoint (the backend's scheduler, or the coordinator of §4.3.3 — *not*
-a per-connection `Worker`).
+a per-connection `Worker`). The registry is specified as an **interface**
+(operations + invariants), not a concrete data structure: v1's in-memory map
+under a single event loop is one implementation, and a persistent,
+shardable, distributed store is a conforming drop-in for high-load backends —
+see the forward-compatibility seams in §4.3.5.
 
 **Build key.** The key must be correct for both input-addressed and
 content-addressed derivations. We key on the **resolved derivation** — the
@@ -634,7 +638,8 @@ candidate mechanisms, in rough order of increasing scope:
    (releasing their output `PathLocks`), clients fall back to building locally,
    and the existing lock/validity logic guarantees no corruption or
    double-build; a persistent registry that lets builds survive a restart is
-   deferred as evidence-gated hardening.
+   deferred as evidence-gated hardening (the seams that keep that deferral a
+   cheap, additive extension are in §4.3.5).
    Its **lifecycle** *(decisions record,
    [O3](./remote-build-protocol-redesign.decisions.md#operational-decision-o3--lazy-spawn-lifecycle-spike-6-q8))*
    is lazy-at-first-capability-request with the daemon parent as sole spawner
@@ -698,6 +703,86 @@ client connection are both healthy** — "the build dies though the endpoint
 lives," which neither the refcount-to-zero nor the coordinator-death case of
 §4.3 covers.
 
+#### 4.3.5 Forward compatibility: persistence and high-load extensions
+
+v1's registry is deliberately **volatile and single-coordinator** (O2
+safe-degrade, no persistence; O4 single event loop). A high-load,
+multi-tenant backend — nixbuild.net being the live example — eventually needs
+the opposite: a **persistent, shardable, distributed** dedup/reuse layer that
+survives restarts and coordinates many orchestrator nodes. This section fixes
+the seams *now* so that layer is a **drop-in extension, not a redesign**, and
+restates the load-bearing constraint: like everything in §4.3 it lives
+**below the client wire** (§5.3), so adding persistence never breaks a frozen
+surface (§7). The cost taken on here is purely specificational — write two
+things as interfaces — with **no v1 implementation work** beyond what O2/O4
+already scope.
+
+Five seams make the extension clean:
+
+1. **The registry is an interface, not a data structure.** Specify it by its
+   *operations and invariants*, not its storage:
+   - `lookupOrCreate(key) → {HIT | MISS, handle}` — atomic per key
+   - `subscribe(handle)` / `unsubscribe(handle)` — refcount
+   - `queryActive(auth)` — authorization-filtered enumeration (§3.7.3)
+   - **Invariant:** *at most one live build per key per coordination domain*,
+     with lookup-and-create atomic with respect to the key.
+
+   The v1 in-memory map under a single event loop (spike §3.3) is *one*
+   conforming implementation; a persistent/distributed KV is another. A client
+   cannot tell which is in use (§5.3).
+
+2. **The interface is lease/CAS-shaped from day one.** This is the one thing
+   that, if *not* anticipated, forces a rewrite later. v1 gets atomicity for
+   free from its single event loop, but the operations are written as if
+   backed by **compare-and-swap plus a lease**: the building node holds key
+   `K` under lease `L`, and the lease is renewed while it builds and **fenced**
+   when it dies. A single-event-loop `if absent then insert` and a distributed
+   CAS-with-lease have the same caller-facing signature *only if we choose that
+   signature now*. Baking in the lease shape lets a future persistent store
+   express "who is building `K`, and recover safely if they vanish" without
+   touching callers — and it is the same primitive the §4.3.4 builder-eviction
+   / fencing case already needs.
+
+3. **Two layers, named separately.** Keep distinct:
+   - the **live coalescing registry** — volatile, low-latency, answers "is `K`
+     building *right now*"; this is what v1 ships, and
+   - the **durable reuse cache** — persistent, answers "was `K` built / may we
+     reuse it"; today this is substitution + CA realisations (§4.7.3).
+
+   With a clean boundary between them, persistence can be added to *either*
+   independently: a survive-restart **persistent live-registry** (O2's deferred
+   re-adoption item) and a **persistent reuse cache** (the database
+   nixbuild.net maintains) are separate extensions that share only the key.
+
+4. **The key is CA-independent; only reuse *provenance* differs.** The build
+   key is `hash(resolved derivation)` for both input-addressed and CA
+   derivations (Blocker 1), so *keying* needs no change to support persistence
+   in either world. What differs is how a durable result is **trusted**:
+   - **CA derivations:** the realisation mapping (resolved drv → output) is
+     **content-verified / self-authenticating**; the durable reuse cache is
+     essentially the realisation store — reuse is free and safe.
+   - **Input-addressed (non-CA):** an input-addressed output path does *not*
+     self-verify, so a persisted `key → outputs` assertion must carry the
+     **builder's trust** (a signature, or a trusted-builder scope) — exactly
+     the existing substitution trust check.
+
+   The persistent layer therefore takes a pluggable **reuse-verification
+   policy** (content-address vs. signature/trusted-scope); everything else is
+   identical. That is how the *same* persistence design works **with and
+   without CA derivations**.
+
+5. **Sharding axis = key, reserved now (O4).** O4 already names the build key
+   as the deferred sharding axis. A persistent KV shards by that same key, so
+   the v1 → persistent transition does not change the sharding model; it swaps
+   a sharded in-memory map for a sharded store with no caller-visible
+   difference.
+
+The only ever client-visible effects of this future layer — cross-node /
+cross-restart **re-attach** (§4.7.4) and an optional **reuse-provenance**
+value on `BuildResult` (§4.4) — both ride the existing version-gated extension
+mechanism (append-after-guard under the unstable version, §7), so the
+persistence work never forces a wire break.
+
 ### 4.4 Extended `BuildResult` and durable diagnostics (G2)
 
 Extend `BuildResult` (and its serialisers) with, all optional/back-compat:
@@ -709,7 +794,11 @@ Extend `BuildResult` (and its serialisers) with, all optional/back-compat:
 * `builderId` — which machine actually ran the build (for fleets/dedup,
   the answer to "where did this come from").
 * `deduplicated` — whether this result came from attaching to an existing
-  build rather than starting a new one (observability for G3).
+  build rather than starting a new one (observability for G3). A future
+  persistent reuse layer (§4.3.5) may widen this into a small
+  **reuse-provenance** value (e.g. built-fresh / coalesced-live / substituted
+  / reused-from-persistent-cache); that is an additive, version-gated field
+  under the §7 extension mechanism — reserved here, not specified yet.
 * Structured failure detail on the `Failure` variant beyond the free-text
   message: the failing **phase**, **exit status**, and the **log tail**
   already computed by `fixupBuilderFailureErrorMessage`
