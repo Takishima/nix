@@ -1060,6 +1060,48 @@ to a file, and print it on non-zero exit; do **not** rely on `nix log`
 against an `ssh-ng://` store (Gap A) — use the builder's native log access
 (for nixbuild.net, its SSH `shell` / HTTP API) as the post-hoc source.
 
+### 4.10 Deployment and operational model (heterogeneous fleets, who runs what)
+
+A real fleet mixes builder kinds, and two practical questions follow: can
+"normal" builders and orchestrator-backed elastic builders coexist, and how
+much does an operator actually have to run? Both fall out of the
+"everything is below the client wire" principle (§5.3) plus the opt-in
+capability handshake (O7) — but the RFC should state them plainly, because
+the audience includes people who will run this as a service.
+
+**Mixed fleets just work, negotiated per builder.** A client lists builders
+exactly as today (`/etc/nix/machines` or `--builders`), each an
+`ssh-ng://host` (or `ssh://host`) URL. Per builder, the handshake negotiates
+`min(client, server)` capabilities (§7), so each machine is independently:
+
+* a **plain builder** — an old or stock daemon advertising no new capability:
+  it behaves exactly as today (no streaming/dedup; `maxJobs` is a hard cap
+  with client-side slot locks). This is the **default, with zero new config**.
+* an **elastic / orchestrator builder** — advertises self-scheduling/elastic
+  capacity (O7, via the handshake *or* a per-machine operator flag): the hook
+  stops gating on local slot locks and treats `maxJobs` as a hint.
+
+The two sit side by side in one `machines` file; nothing is fleet-wide, and
+an old client against a new builder (or vice versa) degrades gracefully *per
+machine*. The elastic behaviour is **strictly opt-in** (O7), so an existing
+`machines` file is never silently overcommitted.
+
+**Three operator personas, three very different setup costs:**
+
+| Persona | What they run | Setup cost |
+|---|---|---|
+| **Uses remote builders** (plain `ssh://` / `ssh-ng://` machines) | Nothing new — list machines as today. | None. |
+| **Runs a stock `nix-daemon`** and wants cross-client dedup/attach | The coordinator is the **daemon binary in a `--coordinator` role**, **lazy-spawned and supervised by the `daemonLoop` parent** (O1/O3) — no separate unit to install, no socket to configure; it appears on first use and idle-exits. | **Effectively zero** — auto-managed; keep running `nix-daemon` as before. |
+| **Operates an elastic service** (nixbuild.net-style orchestrator + builder pods) | The orchestrator, its scheduler, builder-pod lifecycle, the network control plane (§4.3.4), and — if wanted — the persistent dedup/reuse layer (§4.3.5). | **Real, and the RFC ships no turnkey for it.** Nix provides the *wire contract* and the *seams* (§4.3.4 / §4.3.5), not a Kubernetes operator. This is deliberate (running a scheduler is a non-goal, §3); the promise is only that such a service "just works" as `ssh-ng://` to clients. |
+
+The honest takeaway: for everyone *consuming* builders — including the stock
+daemon's own coordinator — there is **no new service to install and the
+defaults are unchanged**. For someone who wants to *be* an elastic backend,
+the RFC makes the client side effortless but leaves the orchestrator as an
+implementation project; what it guarantees is that that project never has to
+touch the frozen wire and can grow persistence/scale behind a stable
+interface.
+
 ## 5. End-to-end: what a remote build looks like after this RFC
 
 ```
