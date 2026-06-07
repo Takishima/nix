@@ -139,6 +139,7 @@ suites = [
       'compression-levels.sh',
       'nix-copy-ssh.sh',
       'nix-copy-ssh-ng.sh',
+      'ssh-ng-build-log.sh',
       'post-hook.sh',
       'function-trace.sh',
       'formatter.sh',

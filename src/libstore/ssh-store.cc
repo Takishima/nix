@@ -61,11 +61,9 @@ public:
     {
     }
 
-    // FIXME extend daemon protocol, move implementation to RemoteStore
-    std::optional<std::string> getBuildLogExact(const StorePath & path) override
-    {
-        unsupported("getBuildLogExact");
-    }
+    // `getBuildLogExact` is now implemented in `RemoteStore` (via the
+    // `QueryBuildLog` worker op), so `ssh-ng://` inherits a working `nix log`
+    // when the remote daemon supports the `build-log-query` feature.
 
 protected:
 

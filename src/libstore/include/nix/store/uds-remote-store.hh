@@ -87,6 +87,17 @@ public:
     }
 
     /**
+     * Disambiguate between `LocalFSStore` (via `IndirectRootStore`) and
+     * `RemoteStore`, both of which now provide `getBuildLogExact`. The store is
+     * local, so read the log straight off disk rather than round-tripping the
+     * `QueryBuildLog` op back to the same daemon.
+     */
+    std::optional<std::string> getBuildLogExact(const StorePath & path) override
+    {
+        return LocalFSStore::getBuildLogExact(path);
+    }
+
+    /**
      * Implementation of `IndirectRootStore::addIndirectRoot()` which
      * delegates to the remote store.
      *

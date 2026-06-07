@@ -136,6 +136,13 @@ struct WorkerProto
     static constexpr std::string_view featureDisableSetOptions = "disable-set-options";
 
     /**
+     * Feature for `QueryBuildLog`: fetching a build log by derivation path over
+     * the worker protocol, so `nix log` works against an `ssh-ng://` store whose
+     * daemon holds the log (closes "Gap A": `getBuildLogExact` over `ssh-ng`).
+     */
+    static constexpr std::string_view featureBuildLogQuery = "build-log-query";
+
+    /**
      * A unidirectional read connection, to be used by the read half of the
      * canonical serializers below.
      */
@@ -256,6 +263,7 @@ enum struct WorkerProto::Op : uint64_t {
     AddBuildLog = 45,
     BuildPathsWithResults = 46,
     AddPermRoot = 47,
+    QueryBuildLog = 48,
 };
 
 struct WorkerProto::ClientHandshakeInfo

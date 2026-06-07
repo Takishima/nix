@@ -1014,6 +1014,21 @@ static void performOp(
         break;
     }
 
+    case WorkerProto::Op::QueryBuildLog: {
+        auto path = store->parseStorePath(readString(conn.from));
+        logger->startWork();
+        auto & logStore = require<LogStore>(*store);
+        auto log = logStore.getBuildLogExact(path);
+        logger->stopWork();
+        // Response: a presence flag, then the log contents if present. (There is
+        // no generic `std::optional<std::string>` serialiser; see
+        // common-protocol.hh.)
+        conn.to << (log ? 1 : 0);
+        if (log)
+            conn.to << *log;
+        break;
+    }
+
     default:
         throw Error("invalid operation %1%", op);
     }

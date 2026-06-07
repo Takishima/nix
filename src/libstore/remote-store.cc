@@ -790,6 +790,22 @@ void RemoteStore::addBuildLog(const StorePath & drvPath, std::string_view log)
     readInt(conn->from);
 }
 
+std::optional<std::string> RemoteStore::getBuildLogExact(const StorePath & path)
+{
+    auto conn(getConnection());
+    if (!conn->protoVersion.features.contains(WorkerProto::featureBuildLogQuery))
+        // Older daemon: no way to fetch the log over the protocol. Keep the
+        // pre-existing behaviour (e.g. `ssh-ng://` used to throw here).
+        unsupported("getBuildLogExact");
+    conn->to << WorkerProto::Op::QueryBuildLog << printStorePath(path);
+    conn.processStderr();
+    // Response: a presence flag, then the log contents if present. (There is no
+    // generic `std::optional<std::string>` serialiser; see common-protocol.hh.)
+    if (!readInt(conn->from))
+        return std::nullopt;
+    return readString(conn->from);
+}
+
 std::optional<std::string> RemoteStore::getVersion()
 {
     auto conn(getConnection());
