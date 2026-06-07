@@ -1,6 +1,7 @@
 #include "nix/store/build/build-coordinator.hh"
 #include "nix/store/build/build-registry.hh"
 #include "nix/store/store-open.hh"
+#include "nix/store/local-fs-store.hh"
 #include "nix/store/globals.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/serialise.hh"
@@ -151,6 +152,27 @@ public:
 /* ------------------------------------------------------------------------ *
  * The coordinator process
  * ------------------------------------------------------------------------ */
+
+/** A URI the coordinator can `openStore()` to reach the *same physical store*
+ *  the daemon serves. `getReference().render()` drops the location of a
+ *  `--store /path` local store (it renders bare `local`), so derive an explicit,
+ *  round-trippable URI from the store's own directory settings. */
+std::string coordinatorStoreUri(Store & store)
+{
+    if (auto * fs = dynamic_cast<const LocalFSStoreConfig *>(&store.config)) {
+        // `root` fully determines state/log/real, so a path round-trips exactly.
+        if (auto root = fs->rootDir.get())
+            return root->string();
+        // No root: pin the physical directories explicitly.
+        return fmt(
+            "local?store=%s&real=%s&state=%s&log=%s",
+            std::string{store.config.storeDir},
+            fs->realStoreDir.get().string(),
+            fs->stateDir.get().string(),
+            fs->logDir.get().string());
+    }
+    return store.config.getReference().render(/*withParams=*/true);
+}
 
 /** Verify the connecting peer is the same uid as us (spike §3.7.1 — the
  *  pluggable-auth seam; peer-cred here, mTLS/identity in a network control
@@ -493,7 +515,6 @@ void spawnCoordinator(const std::string & socketPath, const std::string & storeU
 
 BuildResult relayBuildToCoordinator(
     const std::string & socketPath,
-    const std::string & storeUri,
     Store & store,
     const StorePath & drvPath,
     const BasicDerivation & drv,
@@ -501,6 +522,7 @@ BuildResult relayBuildToCoordinator(
     Logger & logger,
     bool trusted)
 {
+    auto storeUri = coordinatorStoreUri(store);
     // Connect, lazily spawning the coordinator if absent (decline-and-respawn).
     AutoCloseFD fd;
     for (int attempt = 0; attempt < 50; ++attempt) {

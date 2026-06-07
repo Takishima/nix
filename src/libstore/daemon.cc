@@ -664,8 +664,7 @@ static void performOp(
                The relay re-emits the shared build's frames through `logger`
                (the TunnelLogger here), so the client wire is unchanged. */
             if (auto sock = getEnv("NIX_BUILD_COORDINATOR_SOCKET"); sock && !sock->empty())
-                return relayBuildToCoordinator(
-                    *sock, store->config.getReference().render(true), *store, drvPath, drv, buildMode, *logger, trusted);
+                return relayBuildToCoordinator(*sock, *store, drvPath, drv, buildMode, *logger, trusted);
             return store->buildDerivation(drvPath, drv, buildMode);
         }();
         logger->stopWork();

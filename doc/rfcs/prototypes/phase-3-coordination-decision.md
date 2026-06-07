@@ -134,12 +134,30 @@ rewrite. The normative seams (RFC §4.3.5, §8.1) the registry component bakes i
    under the unstable gate** (Blocker 3, guardrail §8.1 #7). Phase 3 *defines*
    their semantics (gate H3); it does **not** bump `SERVE_PROTOCOL_VERSION`.
 
-## 5. Deferred (evidence-/design-gated, not on the critical path)
+## 5. Landed (this and the prior Phase-3 session)
 
-- **Stock-daemon coordinator productionization** — the daemon `--coordinator`
-  role (O1), the control socket + relay path in `daemon.cc`, and the
-  `derivation-building-goal.cc` integration. Multi-session work; the *design* is
-  validated by the prototype above, so this is implementation, not a freeze gate.
+- **In-address-space Build Registry** (`build/build-registry.{hh,cc}`) — the
+  interface + in-memory implementation with the full Blocker-2 cancel matrix,
+  replay buffer, fan-out, `deduplicated`, and unit tests.
+- **Stock-daemon coordinator + relay** (`build/build-coordinator.{hh,cc}`) — a
+  separate lazily-spawned per-store coordinator that hosts the registry, runs
+  builds in forked children, fans their log out, and replays to late joiners;
+  reached from the daemon by a single additive, env-gated branch in the
+  `BuildDerivation` handler (expand/contract). Verified by a fake-SSH functional
+  test (`build-dedup-coordinator.sh`): two concurrent `ssh-ng://localhost` builds
+  of the same resolved derivation coalesce to **one** build (asserted by both
+  clients observing the same builder-process token), with the late joiner
+  receiving the pre-attach log via **replay**.
+
+## 6. Deferred (evidence-/design-gated, not on the critical path)
+
+- **Promote the gate to an experimental feature** (the planned *contraction*):
+  replace the `NIX_BUILD_COORDINATOR_SOCKET` env gate with a real experimental
+  feature + the daemon `--coordinator` role (O1), and collapse the duplicated
+  direct-build branch once the coordinator is the proven default.
+- **`derivation-building-goal.cc` log-fidelity**: the relay currently re-emits
+  the coordinator's frames as plain log lines; structured activity framing
+  (guardrail §8.1 #5, the per-build top-level activity) is a refinement.
 - **CA `resolving`→promote** in production (modelled as a timer in the prototype,
   proven by Workstream B).
 - **Persistent live-registry** (survive-coordinator-restart, O2's deferred

@@ -46,12 +46,12 @@ class Logger;
  * guardrail §8.1 #3) — it does **not** unconditionally cancel a build other
  * clients still want.
  *
- * @param storeUri the URI the coordinator should open to run the build (the
- * same store the daemon serves), used only when it lazily spawns the coordinator.
+ * The store the coordinator opens to run the build (the same physical store the
+ * daemon serves) is derived from `store` itself, so it round-trips even for a
+ * `--store /path` builder.
  */
 BuildResult relayBuildToCoordinator(
     const std::string & socketPath,
-    const std::string & storeUri,
     Store & store,
     const StorePath & drvPath,
     const BasicDerivation & drv,
