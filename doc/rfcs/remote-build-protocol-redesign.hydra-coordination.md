@@ -95,7 +95,14 @@ semantics depend on the still-spiking Phase 3 dedup/coordinator and
 elastic-backend designs): `builderId`, `deduplicated`, and the elastic-backend
 failure-classification fields (a transient/retryable flag, failure-class, and a
 resource hint; RFC §4.4). These are listed only so Hydra sees the shape that is
-coming; **none is part of the frozen ask**.
+coming; **none is part of the frozen ask** in *this* round. They become a
+**later follow-on field-set agreement on this same serve channel** — gate **H3**
+in the validation plan, which freezes the Phase-3 "Build Session" serve surface
+(`F-WIRE`) — opened only once the Phase-3 dedup semantics settle. So this thread
+carries two rounds on one wire: the diagnostic core now (sign-off + queue-runner
+branch), the deferred set later. (The worker-protocol versions of these ops are
+not part of any Hydra ask — `hydra-queue-runner` speaks only the serve protocol.
+Full map: [validation plan, "The external gates (Hydra)"](./remote-build-protocol-redesign.validation.md#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).)
 
 ### 2. New operation: `QueryBuildLog`
 

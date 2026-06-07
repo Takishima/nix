@@ -427,7 +427,13 @@ as frozen.
 - **Follow-up:** open the Hydra coordination thread (RFC Q4 says coordination is
   out of scope of the RFC itself); land the characterisation tests and the
   unstable-version implementation of the diagnostic core in Phase 1; **do not bump
-  `SERVE_PROTOCOL_VERSION` to 2.9 until the four freeze criteria are met.**
+  `SERVE_PROTOCOL_VERSION` to 2.9 until the four freeze criteria are met.** The
+  precise enumeration of what is owed *externally* — criteria 1 and 2 as gates
+  **H1** (named sign-off) and **H2** (queue-runner branch), the deferred serve
+  set as F-WIRE's later follow-on **H3** on the same serve channel, and why
+  `hydra-queue-runner` speaking only the serve protocol means the worker-protocol
+  Build Session ops carry no Hydra gate — is consolidated in
+  [the validation plan, "The external gates (Hydra)"](./remote-build-protocol-redesign.validation.md#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).
 
 ---
 

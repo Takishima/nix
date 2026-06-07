@@ -26,7 +26,7 @@
 > | Freeze | Verdict | What still gates it |
 > |---|---|---|
 > | **F-INT** | ✅ **Freezable now** — no remaining gate | — (the §3 internal coordinator interface is fully validated by Workstream A; productionizing it in `libstore`/`daemon` is Phase 3 *implementation*, not a freeze gate) |
-> | **F-WIRE** | ⏳ **Nix-side cleared**, freeze still blocked | the **Hydra field set** for the public Build Session additions (RFC §7 / Q4) — external; T1–T3 (B) and C-a…C-f (C) are green |
+> | **F-WIRE** | ⏳ **Nix-side cleared**, freeze still blocked | only the **serve half** of the Build Session additions needs Hydra (gate **H3**, the deferred serve set — a *later follow-on* of the same coordination as the diagnostic core, opened once Phase 3 dedup semantics settle; the worker-protocol ops are Nix-internal). T1–T3 (B) and C-a…C-f (C) are green. See [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks). |
 > | **F-SERVE-DIAG** | ⏳ **Layout + back-compat proven**, freeze still blocked | **D3.1** named-maintainer sign-off, **D3.2** queue-runner branch, **D3.4** ≥1-cycle soak — all external/time-gated; D1/D2/D3.3 proven in-prototype, and **D3.3 now also ported into `src/libstore-tests`** (`serve-diag-core.cc`, `SERVE_PROTOCOL_VERSION` unbumped). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
 >
 > The honest one-liner: **F-INT resolves now; F-WIRE and F-SERVE-DIAG have their
@@ -42,13 +42,83 @@ different evidence and can happen at different times:
 | Freeze | What it locks | Public wire? | Gated by |
 |---|---|---|---|
 | **F-INT** — Phase 3 *internal* coordinator interface (spike §3) | the child↔coordinator control protocol, registry, replay/refcount semantics | **No** (machine-internal) | Workstream **A** |
-| **F-WIRE** — Phase 3 *public* Build Session surface | the worker/serve additions for attach / `deduplicated` / `QueryActiveBuilds` | **Yes** (additive, version-gated) | Workstreams **B** + **C** proven, *and* RFC §7/Q4 (Hydra field set) |
+| **F-WIRE** — Phase 3 *public* Build Session surface | the worker/serve additions for attach / `deduplicated` / `QueryActiveBuilds` | **Yes** (additive, version-gated) | Workstreams **B** + **C** proven (the worker-protocol ops are Nix-internal); its *serve-side* fields additionally need Hydra gate **H3** (deferred serve set, same coordination as the diagnostic core) — see [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks) |
 | **F-SERVE-DIAG** — serve diagnostic core (Blocker 3) | `logRef`, `failurePhase`/`exitCode`/`logTail`, `QueryBuildLog`; bump `SERVE_PROTOCOL_VERSION` to `(2<<8\|9)` | **Yes** | Workstream **D** (the four Blocker-3 criteria) |
 
 Key independence: **F-SERVE-DIAG does not need the coordinator.** The serve
 diagnostic core (Phases 0–1) is orthogonal to dedup/attach, so Workstream D can
 run fully in parallel with A/B/C. The operational fixes (Gaps A/B/C, Phases
 0–2/4) gate on **nothing here** and ship first.
+
+---
+
+## The external gates (Hydra) — what is actually owed, by whom, and which freeze each blocks
+
+Every other gate in this plan is engineering this repo can discharge alone —
+and has: the A/B/C/D prototypes are green and the back-compat goldens are ported
+into `src/libstore-tests`. What remains are the **external** gates: the ones that
+need the *Hydra* project, not this repo. They are the long pole, so this section
+names them precisely — because the two places the plan says "Hydra field set"
+(the **F-WIRE** row and the **F-SERVE-DIAG** criteria) read like two separate
+asks when they are not.
+
+**The one fact that disambiguates everything:** `hydra-queue-runner` speaks only
+the **serve** protocol — the stripped-down `BasicClientConnection` /
+`BasicServerConnection` shared for exactly that purpose
+(`serve-protocol.hh:96-101`, §2.1) — and **never the worker protocol** (§2.2).
+Two consequences fall straight out:
+
+- **Nothing on the worker protocol is a Hydra gate.** The Phase-3 Build Session
+  ops (`attach` / `deduplicated` / `QueryActiveBuilds`) also exist on the worker
+  protocol behind its own version bump (§7), but Hydra never reads those bytes.
+  Their freeze is gated by the Nix-side trust/cancel proofs (Workstreams **B**+**C**),
+  not by Hydra.
+- **Only the *serve* surface ever needs Hydra**, and there the new fields split
+  exactly as [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51)
+  splits them: the **frozen diagnostic core** (`logRef`,
+  `failurePhase`/`exitCode`/`logTail`, `QueryBuildLog`) versus the **deferred
+  set** (`builderId`, serve `deduplicated`, the §4.4 classification fields) that
+  stays behind the *unstable* serve version until Phase 3 semantics settle.
+
+From that, there are exactly **three human-external gates** (`H1`–`H3`) and **one
+clock**:
+
+| # | External gate | Blocks | What Hydra must actually do | "Done" means | Owner |
+|---|---|---|---|---|---|
+| **H1** | Serve diagnostic-core sign-off (= **D3.1**) | **F-SERVE-DIAG** | a *named* queue-runner maintainer reviews and signs off the exact frozen field set **and byte order** | a name recorded in the decisions record against the layout in the coordination post | Hydra queue-runner maintainer |
+| **H2** | Queue-runner consumer branch (= **D3.2**) | **F-SERVE-DIAG** | a `hydra-queue-runner` branch consumes `QueryBuildLog` + the structured log frames to **drop its out-of-band log capture**, and reads the extended `BuildResult` | the branch builds and validates against a new-Nix (2.9) builder | Hydra queue-runner maintainer |
+| **H3** | Deferred serve-set agreement | **F-WIRE** (serve half only) | *once Phase 3 settles* `deduplicated`/`builderId` semantics, agree their serve byte layout on the **same** serve channel as H1 — a later follow-on, **not** a separate thread | same sign-off shape as H1, on the deferred fields | Hydra queue-runner maintainer |
+
+Plus **D3.4** — the ≥1-release-cycle **soak** of the diagnostic-core layout on the
+unstable serve version with no change. It is no one's *action*: it is a clock that
+can only start once H1's layout is agreed, and the ported goldens
+(`serve-diag-core.cc`, with its `static_assert` pinning
+`SERVE_PROTOCOL_VERSION == (2<<8|8)`) are what guard the layout *during* that soak.
+
+**The relationships that the two scattered "Hydra field set" mentions obscure:**
+
+- **F-SERVE-DIAG's entire external block is H1 + H2 (+ the D3.4 clock).** Its
+  engineering criterion D3.3 (golden back-compat, both directions) is already
+  discharged in-repo, so H1/H2 are the only human-external items and D3.4 the
+  only wait. Nothing here is a coding task this repo can finish.
+- **H3 is F-WIRE's *only* external dependency, and it is the *same* coordination
+  as H1, deferred — not a second Hydra ask.** F-WIRE's worker-protocol ops are
+  Nix-internal (B+C). Its serve-side fields **are** the deferred set, which
+  Blocker 3 forbids freezing until Phase 3 dedup semantics settle — so H3 cannot
+  even *open* before then, and when it does it rides the serve channel H1 already
+  established. There is **one** Hydra coordination effort — the thread drafted in
+  [`*.hydra-coordination.md`](./remote-build-protocol-redesign.hydra-coordination.md) —
+  carrying H1/H2 now and H3 as a later field-set follow-on on the same wire.
+- **All three are version-gated in both directions** (`min(client,server)` over
+  the major-2 floor of Blocker 3's compatibility correction), so none is a flag
+  day: a Hydra that has neither signed off nor built anything keeps working
+  byte-for-byte at ≤2.8 the entire time.
+
+**Sequencing of the external work:** open the coordination thread (**D4**) first —
+it is the slowest, external long pole — and drive **H1 → H2** (with the **D3.4**
+soak) to bump serve to `(2<<8|9)`; **H3** follows whenever Phase 3's dedup
+semantics freeze. Until H1/H2 land *and* the soak elapses, `SERVE_PROTOCOL_VERSION`
+stays at `(2<<8|8)`.
 
 ---
 
@@ -244,17 +314,19 @@ Phases 0–2/4 (Gaps A/B/C) ─────────────────�
 
 Workstream A ──► F-INT (freeze internal coordinator iface)
       └─► Workstream B (T1–T3) ─┐
-      └─► Workstream C (C1+matrix) ─┴─► (with RFC §7 Hydra field set) ──► F-WIRE
+      └─► Workstream C (C1+matrix) ─┴─► (+ serve-side gate H3, deferred) ──► F-WIRE
 
 Workstream D:  D1+D2 (now, behind unstable) ──► D3.1…D3.4 + D4 ──► F-SERVE-DIAG
                                                  (D is parallel to A/B/C)
 ```
 
 - **A is the trunk** for dedup/attach: B and C extend its prototype.
-- **B and C** are the F-WIRE preconditions on the Nix side; the Hydra field set
-  (RFC §7) is the third.
+- **B and C** are the F-WIRE preconditions on the Nix side; its only external
+  dependency is the serve-side **H3** (the deferred serve set), which is a later
+  follow-on of the *same* Hydra coordination as the diagnostic core, not a
+  separate ask — see [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).
 - **D is parallel and independent** — start D4 (Hydra thread) earliest because it
-  is the slowest, external dependency.
+  is the slowest, external dependency, and it carries H1/H2 now and H3 later.
 
 ## Readiness checklists (copy-paste gates)
 
@@ -272,13 +344,18 @@ assessed freezable; awaiting the maintainer's freeze decision.**
   validation pass. Nothing further is owed from a coding session.
 
 **Freeze F-WIRE (Phase 3 public Build Session surface):** ⏳ Nix-side cleared;
-blocked on the external Hydra field set.
+blocked only on the serve-side **H3** (the deferred serve set) — a later follow-on
+of the diagnostic-core coordination, not a separate Hydra ask.
 - [x] F-INT done.
 - [x] **T1, T2, T3** green (Workstream B prototype, `make check-b`).
 - [x] **C1 + the `build-dedup-cancel` matrix (C-a…C-f)** green (Workstream C
   prototype, `make check-c`).
-- [ ] Hydra field set for the public Build Session additions agreed (RFC §7) —
-  **external; the one remaining F-WIRE gate.**
+- [ ] **H3** — the *serve-side* fields of the Build Session surface (the deferred
+  set: serve `deduplicated`/`builderId`) agreed with Hydra. **External, and the
+  only remaining F-WIRE gate.** It is a *later follow-on* of the diagnostic-core
+  coordination (H1) on the same serve channel, and cannot open until Phase 3
+  dedup semantics settle (Blocker 3 forbids freezing them sooner). The
+  worker-protocol ops carry no Hydra gate. See [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).
 
 **Bump `SERVE_PROTOCOL_VERSION` → `(2<<8|9)` (F-SERVE-DIAG):** ⏳ layout + back-compat
 proven; blocked on external sign-off + soak.
@@ -295,9 +372,12 @@ proven; blocked on external sign-off + soak.
   without bumping the wire. At freeze, the goldens retarget the real serializer
   and the self-contained model is deleted. *(The literal checklist item is now
   closed; D3.1/D3.2/D3.4 below still gate the freeze.)*
-- [ ] **D3.1** (named maintainer sign-off) — external.
-- [ ] **D3.2** (queue-runner branch) — external.
-- [ ] **D3.4** (≥1-cycle soak on the unstable version) — time-gated.
+- [ ] **D3.1 / gate H1** (named maintainer sign-off on the field set + byte order) — external.
+- [ ] **D3.2 / gate H2** (queue-runner branch consuming `QueryBuildLog` + the
+  structured frames, against a 2.9 builder) — external.
+- [ ] **D3.4** (≥1-cycle soak on the unstable version) — time-gated; the clock
+  only starts once H1 fixes the layout. *(H1/H2/D3.4 are the whole external block;
+  see [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).)*
 
 ## Forward-compatibility & elastic-backend additions (gate no freeze)
 
