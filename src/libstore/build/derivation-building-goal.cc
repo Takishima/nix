@@ -769,6 +769,7 @@ Goal::Co DerivationBuildingGoal::buildWithHook(
             buildLog->flush();
             break;
         } else if (auto * timeout = std::get_if<std::unique_ptr<TimedOut>>(&event)) {
+            buildLog->act->result(resBuildResult, (uint64_t) 1);
             hook.reset();
             co_return doneFailure(std::move(**timeout));
         }
@@ -1040,6 +1041,7 @@ Goal::Co DerivationBuildingGoal::buildLocally(
             buildLog->flush();
             break;
         } else if (auto * timeout = std::get_if<std::unique_ptr<TimedOut>>(&event)) {
+            buildLog->act->result(resBuildResult, (uint64_t) 1);
             builder->killChild();
             co_return doneFailure(std::move(**timeout));
         }
@@ -1156,6 +1158,11 @@ static std::unique_ptr<PostBuildHookState> runPostBuildHook(
 
 BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailureError e, BuildLog & buildLog)
 {
+    /* Tell log consumers (e.g. the progress bar in `print-build-logs =
+       on-failure` mode) that this build failed, while its activity is
+       still live, so they can flush the build's buffered log. */
+    buildLog.act->result(resBuildResult, (uint64_t) 1);
+
     auto msg =
         fmt("Cannot build '%s'.\n"
             "Reason: " ANSI_RED "builder %s" ANSI_NORMAL ".",
@@ -1302,6 +1309,9 @@ LogFile::~LogFile()
 
 Goal::Done DerivationBuildingGoal::doneFailureLogTooLong(BuildLog & buildLog)
 {
+    /* See `fixupBuilderFailureErrorMessage`: flush the buffered log. */
+    buildLog.act->result(resBuildResult, (uint64_t) 1);
+
     return doneFailure(BuildError(
         BuildResult::Failure::LogLimitExceeded,
         "%s killed after writing more than %d bytes of log output",

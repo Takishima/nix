@@ -40,9 +40,30 @@ typedef enum {
     resSetExpected = 106,
     resPostBuildLogLine = 107,
     resFetchStatus = 108,
+    /**
+     * Signals the outcome of a build activity (`actBuild`). Carries a
+     * single integer field: 0 for success, non-zero for failure. It is
+     * emitted while the build's activity is still live, so that a logger
+     * which has been buffering the build's log lines (e.g. the progress
+     * bar in `print-build-logs = on-failure` mode) can flush them. This
+     * is purely informational; loggers that don't care ignore it.
+     */
+    resBuildResult = 109,
 } ResultType;
 
 typedef uint64_t ActivityId;
+
+/**
+ * How (and whether) a logger should surface a build's full log output.
+ */
+enum class BuildLogPrintMode {
+    /** Never print the build log (only the progress bar's last line). */
+    off,
+    /** Stream the build log live, as it is produced (the `-L` behaviour). */
+    on,
+    /** Stay quiet on success, but dump a build's full log when it fails. */
+    onFailure,
+};
 
 class LoggerSettings : public Config
 {
@@ -175,7 +196,20 @@ public:
         return {};
     }
 
-    virtual void setPrintBuildLogs(bool printBuildLogs) {}
+    /**
+     * Set the build-log print mode. Loggers that can buffer/replay build
+     * logs (the progress bar) override this; others may ignore it.
+     */
+    virtual void setPrintBuildLogsMode(BuildLogPrintMode mode) {}
+
+    /**
+     * Backwards-compatible convenience: `true` maps to
+     * `BuildLogPrintMode::on`, `false` to `BuildLogPrintMode::off`.
+     */
+    void setPrintBuildLogs(bool printBuildLogs)
+    {
+        setPrintBuildLogsMode(printBuildLogs ? BuildLogPrintMode::on : BuildLogPrintMode::off);
+    }
 };
 
 /**

@@ -5,6 +5,7 @@
 
 #include "nix/util/types.hh"
 #include "nix/util/configuration.hh"
+#include "nix/util/logging.hh"
 #include "nix/util/environment-variables.hh"
 #include "nix/store/build/derivation-builder.hh"
 #include "nix/store/local-settings.hh"
@@ -14,6 +15,11 @@
 #include "nix/store/config.hh"
 
 namespace nix {
+
+template<>
+BuildLogPrintMode BaseSetting<BuildLogPrintMode>::parse(const std::string & str) const;
+template<>
+std::string BaseSetting<BuildLogPrintMode>::to_string() const;
 
 struct ProfileDirsOptions;
 
@@ -375,6 +381,27 @@ public:
     // move it out in the 2nd pass
     Setting<bool> printMissing{
         this, true, "print-missing", "Whether to print what paths need to be built or downloaded."};
+
+    Setting<BuildLogPrintMode> printBuildLogs{
+        this,
+        BuildLogPrintMode::off,
+        "print-build-logs",
+        R"(
+          Controls whether the full build logs of derivations are written to
+          standard error. One of:
+
+          - `off` (default): only a progress indicator is shown; build logs
+            are not printed. This is overridden to `on` by the `--print-build-logs`
+            (`-L`) flag.
+
+          - `on`: build logs are streamed live as they are produced. Equivalent
+            to passing `--print-build-logs` / `-L`.
+
+          - `on-failure`: build logs are not shown while builds succeed, but
+            when a build fails its full log is printed. This is convenient for
+            CI: quiet on success, complete log on failure, without having to
+            decide to pass `-L` before knowing a build will break.
+        )"};
 
     Setting<bool> useXDGBaseDirectories{
         this,

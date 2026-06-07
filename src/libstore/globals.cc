@@ -305,6 +305,42 @@ NLOHMANN_JSON_SERIALIZE_ENUM(
         {SandboxMode::smDisabled, false},
     });
 
+NLOHMANN_JSON_SERIALIZE_ENUM(
+    BuildLogPrintMode,
+    {
+        {BuildLogPrintMode::off, "off"},
+        {BuildLogPrintMode::on, "on"},
+        {BuildLogPrintMode::onFailure, "on-failure"},
+    });
+
+template<>
+BuildLogPrintMode BaseSetting<BuildLogPrintMode>::parse(const std::string & str) const
+{
+    if (str == "off" || str == "false")
+        return BuildLogPrintMode::off;
+    else if (str == "on" || str == "true")
+        return BuildLogPrintMode::on;
+    else if (str == "on-failure")
+        return BuildLogPrintMode::onFailure;
+    else
+        throw UsageError("option '%s' has invalid value '%s'", name, str);
+}
+
+template<>
+std::string BaseSetting<BuildLogPrintMode>::to_string() const
+{
+    switch (value) {
+    case BuildLogPrintMode::off:
+        return "off";
+    case BuildLogPrintMode::on:
+        return "on";
+    case BuildLogPrintMode::onFailure:
+        return "on-failure";
+    default:
+        unreachable();
+    }
+}
+
 template<>
 SandboxMode BaseSetting<SandboxMode>::parse(const std::string & str) const
 {

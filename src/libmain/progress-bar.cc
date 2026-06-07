@@ -79,6 +79,11 @@ private:
 
         std::map<ActivityType, ActivitiesByType> activitiesByType;
 
+        /* In `BuildLogPrintMode::onFailure`, the full log of each in-flight
+           build (`actBuild`), buffered so it can be dumped if the build
+           fails. Keyed by activity id; dropped when the activity stops. */
+        std::map<ActivityId, std::vector<std::string>> buildLogs;
+
         uint64_t filesLinked = 0, bytesLinked = 0;
 
         uint64_t corruptedPaths = 0, untrustedPaths = 0;
@@ -102,7 +107,7 @@ private:
 
     std::condition_variable quitCV, updateCV;
 
-    bool printBuildLogs = false;
+    BuildLogPrintMode buildLogMode = BuildLogPrintMode::off;
     bool isTTY;
 
     std::unique_ptr<InterruptCallback> interruptCallback;
@@ -200,7 +205,7 @@ public:
 
     bool isVerbose() override
     {
-        return printBuildLogs;
+        return buildLogMode == BuildLogPrintMode::on;
     }
 
     void log(Verbosity lvl, std::string_view s) override
@@ -329,7 +334,23 @@ public:
             state->its.erase(i);
         }
 
+        state->buildLogs.erase(act);
+
         update(*state);
+    }
+
+    /* Dump a failed build's buffered log (used in `on-failure` mode). */
+    void dumpBuildLog(State & state, ActivityId act)
+    {
+        auto b = state.buildLogs.find(act);
+        if (b == state.buildLogs.end() || b->second.empty())
+            return;
+        std::string name = "unnamed";
+        if (auto i = state.its.find(act); i != state.its.end())
+            name = i->second->name.value_or(name);
+        log(state, lvlError, fmt(ANSI_FAINT "full build log for '%s':" ANSI_NORMAL, name));
+        for (auto & line : b->second)
+            log(state, lvlError, ANSI_FAINT + name + "> " + ANSI_NORMAL + line);
     }
 
     void result(ActivityId act, ResultType type, const std::vector<Field> & fields) override
@@ -347,19 +368,32 @@ public:
             auto i = state->its.find(act);
             assert(i != state->its.end());
             ActInfo info = *i->second;
-            if (printBuildLogs) {
+            if (buildLogMode == BuildLogPrintMode::on) {
                 auto suffix = "> ";
                 if (type == resPostBuildLogLine) {
                     suffix = " (post)> ";
                 }
                 log(*state, lvlInfo, ANSI_FAINT + info.name.value_or("unnamed") + suffix + ANSI_NORMAL + lastLine);
             } else {
+                /* Buffer the build's log so we can dump it if the build
+                   fails (`on-failure`). Post-build-hook output is not part
+                   of the build that may fail, so it isn't buffered. */
+                if (buildLogMode == BuildLogPrintMode::onFailure && type == resBuildLogLine)
+                    state->buildLogs[act].push_back(lastLine);
                 state->activities.erase(i->second);
                 info.lastLine = lastLine;
                 state->activities.emplace_back(info);
                 i->second = std::prev(state->activities.end());
                 update(*state);
             }
+        }
+
+        else if (type == resBuildResult) {
+            /* A build finished. In `on-failure` mode, dump the failing
+               build's buffered log. The buffer is cleaned up when the
+               activity stops. */
+            if (buildLogMode == BuildLogPrintMode::onFailure && getI(fields, 0) != 0)
+                dumpBuildLog(*state, act);
         }
 
         else if (type == resUntrustedPath) {
@@ -708,9 +742,9 @@ public:
         return s[0];
     }
 
-    void setPrintBuildLogs(bool printBuildLogs) override
+    void setPrintBuildLogsMode(BuildLogPrintMode mode) override
     {
-        this->printBuildLogs = printBuildLogs;
+        this->buildLogMode = mode;
     }
 };
 

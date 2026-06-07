@@ -90,10 +90,10 @@ public:
         return std::nullopt;
     }
 
-    void setPrintBuildLogs(bool printBuildLogs) override
+    void setPrintBuildLogsMode(BuildLogPrintMode mode) override
     {
         for (auto & logger : loggers)
-            logger->setPrintBuildLogs(printBuildLogs);
+            logger->setPrintBuildLogsMode(mode);
     }
 };
 
