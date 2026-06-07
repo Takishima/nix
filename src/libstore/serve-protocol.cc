@@ -43,6 +43,16 @@ BuildResult ServeProto::Serialise<BuildResult>::read(const StoreDirConfig & stor
         }
     }
 
+    // Structured diagnostic core (RFC §4.4, G2/Gap C), appended after the 2.8
+    // `builtOutputs` block. Carried only on the *unstable* serve 2.9 wire (gated
+    // by the `serve-build-logs` experimental feature); NOT a back-compat promise
+    // until `SERVE_PROTOCOL_VERSION` bumps to 2.9. See decisions Blocker 3.
+    if (conn.version >= ServeProto::Version{2, 9}) {
+        uint64_t exitCode = 0;
+        conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
+        res.exitCode = (int64_t) exitCode;
+    }
+
     res.inner = std::visit(
         overloaded{
             [&](BuildResult::Success::Status s) -> decltype(res.inner) {
@@ -93,6 +103,12 @@ void ServeProto::Serialise<BuildResult>::write(
                 sm[dummyId] = j.dump();
             }
             ServeProto::write(store, conn, sm);
+        }
+
+        // Structured diagnostic core (RFC §4.4), appended after `builtOutputs`,
+        // gated on the unstable serve 2.9 wire. See decisions Blocker 3.
+        if (conn.version >= ServeProto::Version{2, 9}) {
+            conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
         }
     };
 

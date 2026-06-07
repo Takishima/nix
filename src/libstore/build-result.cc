@@ -163,6 +163,21 @@ void adl_serializer<BuildResult>::to_json(json & res, const BuildResult & br)
         res["cpuSystem"] = br.cpuSystem->count();
     }
 
+    // Structured diagnostics (RFC §4.4). Emitted only when present, so a
+    // result without them serializes exactly as before.
+    if (!br.logRef.empty()) {
+        res["logRef"] = br.logRef;
+    }
+    if (!br.failurePhase.empty()) {
+        res["failurePhase"] = br.failurePhase;
+    }
+    if (br.exitCode != 0) {
+        res["exitCode"] = br.exitCode;
+    }
+    if (!br.logTail.empty()) {
+        res["logTail"] = br.logTail;
+    }
+
     // Handle success or failure variant
     std::visit(
         overloaded{
@@ -197,6 +212,20 @@ BuildResult adl_serializer<BuildResult>::from_json(const json & _json)
     }
     if (auto cpuSystem = optionalValueAt(json, "cpuSystem")) {
         br.cpuSystem = std::chrono::microseconds(getUnsigned(*cpuSystem));
+    }
+
+    // Structured diagnostics (RFC §4.4).
+    if (auto logRef = optionalValueAt(json, "logRef")) {
+        br.logRef = getString(*logRef);
+    }
+    if (auto failurePhase = optionalValueAt(json, "failurePhase")) {
+        br.failurePhase = getString(*failurePhase);
+    }
+    if (auto exitCode = optionalValueAt(json, "exitCode")) {
+        br.exitCode = getInteger<int64_t>(*exitCode);
+    }
+    if (auto logTail = optionalValueAt(json, "logTail")) {
+        br.logTail = getString(*logTail);
     }
 
     // Determine success or failure based on success field

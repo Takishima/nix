@@ -313,6 +313,62 @@ VERSIONED_CHARACTERIZATION_TEST(
         t;
     }))
 
+/* Serve 2.9 (unstable, `serve-build-logs`): the structured diagnostic core
+   (logRef/failurePhase/exitCode/logTail) is appended after `builtOutputs`.
+   This is the production characterisation of the layout modelled in
+   `serve-diag-core.cc`; the version is NOT yet frozen (decisions Blocker 3). */
+VERSIONED_CHARACTERIZATION_TEST(
+    ServeProtoTest,
+    buildResult_2_9,
+    "build-result-2.9",
+    (ServeProto::Version{
+        .major = 2,
+        .minor = 9,
+    }),
+    ({
+        using namespace std::literals::chrono_literals;
+        std::tuple<BuildResult, BuildResult, BuildResult> t{
+            BuildResult{
+                .inner{BuildResult::Failure{{
+                    .status = BuildResult::Failure::OutputRejected,
+                    .msg = HintFmt("no idea why"),
+                }}},
+                .logRef = "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
+                .failurePhase = "build",
+                .exitCode = 1,
+                .logTail = "error: command failed\n",
+            },
+            BuildResult{
+                .inner{BuildResult::Failure{{
+                    .status = BuildResult::Failure::NotDeterministic,
+                    .msg = HintFmt("no idea why"),
+                    .isNonDeterministic = true,
+                }}},
+                .timesBuilt = 3,
+                .startTime = 30,
+                .stopTime = 50,
+            },
+            BuildResult{
+                .inner{BuildResult::Success{
+                    .status = BuildResult::Success::Built,
+                    .builtOutputs =
+                        {
+                            {
+                                "foo",
+                                {
+                                    .outPath = StorePath{"g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo"},
+                                },
+                            },
+                        },
+                }},
+                .timesBuilt = 1,
+                .startTime = 30,
+                .stopTime = 50,
+            },
+        };
+        t;
+    }))
+
 VERSIONED_CHARACTERIZATION_TEST(
     ServeProtoTest,
     unkeyedValidPathInfo_2_3,

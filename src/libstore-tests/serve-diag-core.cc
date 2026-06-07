@@ -12,21 +12,26 @@
 //     2.9 "diagnostic core" layout (decisions Blocker 3 §3): logRef,
 //     failurePhase, exitCode, logTail appended after the 2.8 builtOutputs block
 //     under a `>= {2,9}` guard, plus QueryBuildLog as Command = 10.
-//   * It deliberately does NOT touch the production serve serializer
-//     (src/libstore/serve-protocol.cc) and does NOT bump SERVE_PROTOCOL_VERSION
-//     (still (2 << 8 | 8) — verified by a static_assert below). The diagnostic
-//     core has not yet met its four freeze criteria (D3.1 named-maintainer
-//     sign-off, D3.2 queue-runner branch, D3.4 ≥1-cycle soak), so the layout is
-//     not yet a back-compat promise and must not be wired into the real
-//     serializer.
+//   * The production serve/worker serializers now DO carry this layout
+//     (src/libstore/{serve,worker}-protocol.cc), but only behind the *unstable*
+//     gate — serve `>= {2,9}`, offered solely when the `serve-build-logs`
+//     experimental feature is enabled, and the worker `build-log-query`
+//     feature — and WITHOUT bumping SERVE_PROTOCOL_VERSION (still (2 << 8 | 8),
+//     verified by the static_assert below). So the layout is reachable for the
+//     soak but is NOT yet a back-compat promise. The remaining gate on the bump
+//     is Nix-side: maintainer sign-off + a ≥1-cycle soak (D3.4). The earlier
+//     external Hydra gates (D3.1 named-maintainer review, D3.2 queue-runner
+//     branch) were downgraded to solicited / post-freeze input (2026-06) and no
+//     longer block the bump; the production characterisation now also lives in
+//     the real serve/worker golden fixtures (`build-result-2.9`,
+//     `build-result-build-log-query`).
 //   * The model here is therefore self-contained: it reproduces the exact
 //     version-gated ladder *shape* of serve-protocol.cc (8-byte LE integers,
 //     length-prefixed strings padded to 8) so the golden bytes are directly
 //     comparable, but it carries only the representative subset of BuildResult
-//     fields the layout decision is about. Once the freeze criteria are met and
-//     the real serializer grows the `>= {2,9}` branch, these golden bytes become
-//     the characterisation fixture for THAT code and this self-contained model
-//     is deleted.
+//     fields the layout decision is about. Once the version is bumped at freeze,
+//     the production fixtures become the sole characterisation and this
+//     self-contained model is deleted.
 //
 // Until then this guards the candidate layout against accidental drift while it
 // soaks (D3.4): any change to the proposed byte order fails a golden test, which

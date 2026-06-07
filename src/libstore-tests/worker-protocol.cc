@@ -532,6 +532,67 @@ VERSIONED_CHARACTERIZATION_TEST(
         t;
     }))
 
+/* Worker protocol with the `build-log-query` feature: the structured
+   diagnostic core (logRef/failurePhase/exitCode/logTail) is appended after
+   `builtOutputs`. Unstable / not frozen (decisions Blocker 3). */
+VERSIONED_CHARACTERIZATION_TEST(
+    WorkerProtoTest,
+    buildResult_build_log_query,
+    "build-result-build-log-query",
+    (WorkerProto::Version{
+        .number =
+            {
+                .major = 1,
+                .minor = 38,
+            },
+        .features = {"realisation-with-path-not-hash", "build-log-query"},
+    }),
+    ({
+        using namespace std::literals::chrono_literals;
+        std::tuple<BuildResult, BuildResult, BuildResult> t{
+            BuildResult{
+                .inner{BuildResult::Failure{{
+                    .status = BuildResult::Failure::OutputRejected,
+                    .msg = HintFmt("no idea why"),
+                }}},
+                .logRef = "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
+                .failurePhase = "build",
+                .exitCode = 1,
+                .logTail = "error: command failed\n",
+            },
+            BuildResult{
+                .inner{BuildResult::Failure{{
+                    .status = BuildResult::Failure::NotDeterministic,
+                    .msg = HintFmt("no idea why"),
+                    .isNonDeterministic = true,
+                }}},
+                .timesBuilt = 3,
+                .startTime = 30,
+                .stopTime = 50,
+            },
+            BuildResult{
+                .inner{BuildResult::Success{
+                    .status = BuildResult::Success::Built,
+                    .builtOutputs =
+                        {
+                            {
+                                "foo",
+                                {
+                                    .outPath = StorePath{"g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo"},
+                                },
+                            },
+                        },
+                }},
+                .timesBuilt = 1,
+                .startTime = 30,
+                .stopTime = 50,
+                .cpuUser = std::chrono::microseconds(500s),
+                .cpuSystem = std::chrono::microseconds(604s),
+            },
+        };
+        t;
+    }))
+
 VERSIONED_CHARACTERIZATION_TEST(
     WorkerProtoTest,
     keyedBuildResult_1_29,

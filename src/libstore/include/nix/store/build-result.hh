@@ -193,6 +193,44 @@ struct BuildResult
      */
     std::optional<std::chrono::microseconds> cpuUser, cpuSystem;
 
+    /**
+     * Structured build diagnostics (RFC `remote-build-protocol-redesign`
+     * §4.4, G2/Gap C) — the "diagnostic core" that lets a remote build
+     * result be as informative as a local one.
+     *
+     * These are carried only on the *unstable* serve 2.9 wire (gated by the
+     * `serve-build-logs` experimental feature) and the worker protocol's
+     * `build-log-query` feature. They are **not frozen**: the layout may
+     * still change until `SERVE_PROTOCOL_VERSION` is bumped to 2.9 (see
+     * `remote-build-protocol-redesign.decisions.md`, Blocker 3). An empty
+     * string / zero means "absent", matching the existing `errorMsg`
+     * sentinel idiom in the `BuildResult` serializers.
+     */
+
+    /**
+     * The resolved derivation path under which the builder asserts the
+     * build log is persisted (the `LogStore::getBuildLog` key), so a client
+     * can fetch the full log with `nix log --store <builder> <logRef>`.
+     */
+    std::string logRef;
+
+    /**
+     * For a failure, the build phase that failed (e.g. `"build"`), if known.
+     */
+    std::string failurePhase;
+
+    /**
+     * For a failure, the builder's exit status, if it ran (0 if not
+     * applicable).
+     */
+    int64_t exitCode = 0;
+
+    /**
+     * For a failure, the tail of the build log (most recent lines), so a
+     * remote failure can be rendered inline without a second round-trip.
+     */
+    std::string logTail;
+
     bool operator==(const BuildResult &) const noexcept;
     std::strong_ordering operator<=>(const BuildResult &) const noexcept;
 };

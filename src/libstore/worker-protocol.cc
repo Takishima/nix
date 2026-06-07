@@ -280,6 +280,16 @@ BuildResult WorkerProto::Serialise<BuildResult>::read(const StoreDirConfig & sto
         }
     }
 
+    // Structured diagnostic core (RFC §4.4, G2/Gap C), appended after
+    // `builtOutputs`. Carried only when the peer offers the `build-log-query`
+    // feature (the same unstable diagnostic capability as `QueryBuildLog`);
+    // NOT frozen until the serve side bumps to 2.9. See decisions Blocker 3.
+    if (conn.version.features.contains(WorkerProto::featureBuildLogQuery)) {
+        uint64_t exitCode = 0;
+        conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
+        res.exitCode = (int64_t) exitCode;
+    }
+
     res.inner = std::visit(
         overloaded{
             [&](BuildResult::Success::Status s) -> decltype(res.inner) {
@@ -334,6 +344,12 @@ void WorkerProto::Serialise<BuildResult>::write(
                 sm[dummyId] = j.dump();
             }
             WorkerProto::write(store, conn, sm);
+        }
+
+        // Structured diagnostic core (RFC §4.4), appended after `builtOutputs`,
+        // gated on the `build-log-query` feature. See decisions Blocker 3.
+        if (conn.version.features.contains(WorkerProto::featureBuildLogQuery)) {
+            conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
         }
     };
 

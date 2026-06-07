@@ -1163,6 +1163,21 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
        still live, so they can flush the build's buffered log. */
     buildLog.act->result(resBuildResult, (uint64_t) 1);
 
+    /* Populate the structured diagnostic core (RFC §4.4, G2/Gap C) so this
+       failure is as informative over the wire as it is locally. Carried only
+       on the unstable serve 2.9 / worker `build-log-query` wire; harmless
+       otherwise. `logRef` is the persist key a client passes to `nix log`. */
+    buildResult.logRef = worker.store.printStorePath(drvPath);
+    buildResult.exitCode = e.builderStatus;
+    {
+        std::string tail;
+        for (auto & line : buildLog.getTail()) {
+            tail += line;
+            tail += '\n';
+        }
+        buildResult.logTail = std::move(tail);
+    }
+
     auto msg =
         fmt("Cannot build '%s'.\n"
             "Reason: " ANSI_RED "builder %s" ANSI_NORMAL ".",

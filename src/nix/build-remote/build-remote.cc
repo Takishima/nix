@@ -53,22 +53,33 @@ static bool allSupportedLocally(Store & store, const StringSet & requiredFeature
 }
 
 /**
- * Best-effort "fail loud" (Gap C / G8) for a remote build failure: if the build
- * log can be fetched back from the remote store (now possible over `ssh-ng://`,
- * and over `ssh://` with the `serve-build-logs` feature — Gap A), return the tail
- * of it plus a `nix log` hint to append to the failure message. Returns "" if no
- * log is available, and never throws — surfacing the log must not mask the build
- * failure itself.
+ * Best-effort "fail loud" (Gap C / G8) for a remote build failure: return the
+ * tail of the remote build log plus a `nix log` hint to append to the failure
+ * message. The tail comes from the structured `BuildResult::logTail` when the
+ * builder sent it (serve 2.9 / worker `build-log-query`, gated — no extra
+ * round-trip), otherwise it is fetched back from the remote store (now possible
+ * over `ssh-ng://`, and over `ssh://` with the `serve-build-logs` feature — Gap
+ * A). Returns "" if no log is available, and never throws — surfacing the log
+ * must not mask the build failure itself.
  */
-static std::string
-renderRemoteBuildLogTail(Store & remoteStore, Store & localStore, const StorePath & drvPath, std::string_view storeUri)
+static std::string renderRemoteBuildLogTail(
+    Store & remoteStore,
+    Store & localStore,
+    const StorePath & drvPath,
+    std::string_view storeUri,
+    const BuildResult & result)
 {
     constexpr size_t maxLines = 25;
     try {
-        auto * logStore = dynamic_cast<LogStore *>(&remoteStore);
-        if (!logStore)
-            return "";
-        auto log = logStore->getBuildLogExact(drvPath);
+        std::optional<std::string> log;
+        /* Prefer the structured log tail the builder sent back in the
+           `BuildResult` (serve 2.9 / worker `build-log-query`, gated) — no
+           second round-trip. Fall back to fetching the full log over the
+           remote store (Gap A) for builders that don't send it yet. */
+        if (!result.logTail.empty())
+            log = result.logTail;
+        else if (auto * logStore = dynamic_cast<LogStore *>(&remoteStore))
+            log = logStore->getBuildLogExact(drvPath);
         if (!log || log->empty())
             return "";
 
@@ -396,7 +407,7 @@ static int main_build_remote(int argc, char ** argv)
                     store->printStorePath(*drvPath),
                     storeUri,
                     failureP->message(),
-                    renderRemoteBuildLogTail(*sshStore, *store, *drvPath, storeUri));
+                    renderRemoteBuildLogTail(*sshStore, *store, *drvPath, storeUri, result));
             }
         } else {
             copyClosure(*store, *sshStore, StorePathSet{*drvPath}, NoRepair, NoCheckSigs, substitute);
