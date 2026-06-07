@@ -891,7 +891,8 @@ static void opServe(Strings opFlags, Strings opArgs)
     FdSink out(getStandardOutput());
 
     /* Exchange the greeting. */
-    ServeProto::Version clientVersion = ServeProto::BasicServerConnection::handshake(out, in, ServeProto::latest);
+    ServeProto::Version clientVersion =
+        ServeProto::BasicServerConnection::handshake(out, in, ServeProto::offeredVersion());
 
     ServeProto::ReadConn rconn{
         .from = in,
@@ -906,7 +907,11 @@ static void opServe(Strings opFlags, Strings opArgs)
         // FIXME: changing options here doesn't work if we're
         // building through the daemon.
         verbosity = lvlError;
-        settings.getLogFileSettings().keepLog = false;
+        // Persist the build log so it can be fetched back via `QueryBuildLog`
+        // (Gap A). Without the diagnostic surface negotiated there is no way to
+        // retrieve it, so keep the historical suppression to avoid filling the
+        // log dir for clients that can never read it.
+        settings.getLogFileSettings().keepLog = ServeProto::supportsDiagnostics(clientVersion);
         settings.getWorkerSettings().useSubstitutes = false;
 
         auto options = ServeProto::Serialise<ServeProto::BuildOptions>::read(*store, rconn);
@@ -1078,6 +1083,17 @@ static void opServe(Strings opFlags, Strings opArgs)
 
             out << 1; // indicate success
 
+            break;
+        }
+
+        case ServeProto::Command::QueryBuildLog: { /* Provisional; serve >= 2.9. */
+            auto drvPath = store->parseStorePath(readString(in));
+            auto & logStore = require<LogStore>(*store);
+            auto log = logStore.getBuildLogExact(drvPath);
+            // Response: a presence flag, then the log contents if present.
+            out << (log ? 1 : 0);
+            if (log)
+                out << *log;
             break;
         }
 

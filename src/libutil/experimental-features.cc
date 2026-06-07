@@ -27,7 +27,7 @@ void MissingExperimentalFeature::anchor() {}
  * feature, we either have no issue at all if few features are not added
  * at the end of the list, or a proper merge conflict if they are.
  */
-constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::BLAKE3Hashes);
+constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::ServeBuildLogs);
 
 constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails = {{
     {
@@ -280,6 +280,23 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
             Enables support for BLAKE3 hashes.
         )",
         .trackingUrl = "https://github.com/NixOS/nix/milestone/60",
+    },
+    {
+        .tag = Xp::ServeBuildLogs,
+        .name = "serve-build-logs",
+        .description = R"(
+            Enables fetching build logs over the `nix-store --serve` protocol
+            (used by `ssh://` stores and `hydra-queue-runner`), so that
+            `nix log` works against an `ssh://` builder without out-of-band log
+            capture.
+
+            This offers a provisional serve protocol version 2.9 with a
+            `QueryBuildLog` operation. The 2.9 wire layout is **not** yet a
+            back-compat promise (`SERVE_PROTOCOL_VERSION` stays at 2.8); it is
+            gated here until the freeze criteria for the serve diagnostic core
+            are met.
+        )",
+        .trackingUrl = "https://github.com/NixOS/nix/milestone/55",
     },
 }};
 

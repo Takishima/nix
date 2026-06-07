@@ -2,8 +2,19 @@
 #include "nix/store/serve-protocol-impl.hh"
 #include "nix/store/build-result.hh"
 #include "nix/store/derivations.hh"
+#include "nix/util/experimental-features.hh"
 
 namespace nix {
+
+ServeProto::Version ServeProto::offeredVersion()
+{
+    // Only offer the provisional 2.9 diagnostic surface when explicitly opted
+    // in; otherwise stay at the stable `latest` (2.8). The `min()` handshake
+    // then degrades transparently for peers that do not offer 2.9.
+    return experimentalFeatureSettings.isEnabled(Xp::ServeBuildLogs) ? ServeProto::unstableDiagnostics
+                                                                     : ServeProto::latest;
+}
+
 
 ServeProto::Version ServeProto::BasicClientConnection::handshake(
     BufferedSink & to, Source & from, ServeProto::Version localVersion, std::string_view host)

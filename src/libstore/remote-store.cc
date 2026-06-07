@@ -794,9 +794,10 @@ std::optional<std::string> RemoteStore::getBuildLogExact(const StorePath & path)
 {
     auto conn(getConnection());
     if (!conn->protoVersion.features.contains(WorkerProto::featureBuildLogQuery))
-        // Older daemon: no way to fetch the log over the protocol. Keep the
-        // pre-existing behaviour (e.g. `ssh-ng://` used to throw here).
-        unsupported("getBuildLogExact");
+        // Older daemon with no way to fetch the log over the protocol. Report
+        // "no log here" rather than failing, so `nix log` can fall through to
+        // other substituters.
+        return std::nullopt;
     conn->to << WorkerProto::Op::QueryBuildLog << printStorePath(path);
     conn.processStderr();
     // Response: a presence flag, then the log contents if present. (There is no

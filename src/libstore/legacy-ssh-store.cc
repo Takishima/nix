@@ -76,8 +76,8 @@ ref<LegacySSHStore::Connection> LegacySSHStore::openConnection()
     StringSink saved;
     TeeSource tee(conn->from, saved);
     try {
-        conn->remoteVersion =
-            ServeProto::BasicClientConnection::handshake(conn->to, tee, ServeProto::latest, config->authority.host);
+        conn->remoteVersion = ServeProto::BasicClientConnection::handshake(
+            conn->to, tee, ServeProto::offeredVersion(), config->authority.host);
     } catch (SerialisationError & e) {
         // in.close(): Don't let the remote block on us not writing.
         conn->sshConn->in.close();
@@ -284,6 +284,24 @@ StorePathSet LegacySSHStore::queryValidPaths(const StorePathSet & paths, bool lo
 {
     auto conn(connections->get());
     return conn->queryValidPaths(*this, lock, paths, maybeSubstitute);
+}
+
+std::optional<std::string> LegacySSHStore::getBuildLogExact(const StorePath & path)
+{
+    auto conn(connections->get());
+    if (!ServeProto::supportsDiagnostics(conn->remoteVersion))
+        // Remote `nix-store --serve` is too old or did not opt in to the
+        // provisional diagnostic surface (`serve-build-logs`). Report "no log
+        // here" rather than failing, so `nix log` can fall through to other
+        // substituters (matching the old behaviour when this store was not a
+        // LogStore and was skipped).
+        return std::nullopt;
+    conn->to << ServeProto::Command::QueryBuildLog << printStorePath(path);
+    conn->to.flush();
+    // Response: a presence flag, then the log contents if present.
+    if (!readInt(conn->from))
+        return std::nullopt;
+    return readString(conn->from);
 }
 
 void LegacySSHStore::connect()
