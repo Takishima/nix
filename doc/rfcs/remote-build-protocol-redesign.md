@@ -804,6 +804,24 @@ Extend `BuildResult` (and its serialisers) with, all optional/back-compat:
   already computed by `fixupBuilderFailureErrorMessage`
   (`derivation-building-goal.cc:1157`) — carried as fields rather than
   baked into a string, so clients can render and machines can parse them.
+* **Failure classification for retry — builder-internal vs. build-intrinsic.**
+  The structured failure must carry an explicit **transient/retryable**
+  classification *distinct from the exit code*, so a *builder-internal /
+  infrastructural* failure — the pod was under-provisioned and OOM-killed, the
+  builder was evicted, ran out of disk, or lost the network — is
+  distinguishable from a *build-intrinsic* failure (compile error, failing
+  test, hash mismatch). Today this is not expressible: `BuildResult` has only a
+  vague `TransientFailure` ("possibly transient", `build-result.hh:39-40`), and
+  an OOM kill surfaces as a generic builder failure (exit 137)
+  indistinguishable from a genuinely broken or memory-hungry build. Add (a) a
+  **transient** flag plus a small **failure-class** value (e.g.
+  `resource-exhausted` / `evicted` / `infra` / `build-error`), and (b) an
+  optional **resource hint** on resource exhaustion (e.g. observed peak memory,
+  killed-for-memory) so a scheduler can *right-size* a retry instead of
+  guessing. Two invariants follow: a transient/infra failure **must not be
+  cached or reused** as a result — it must never poison the build key in the
+  durable reuse cache (§4.3.5, §4.7.3; contrast `CachedFailure`) — and it is
+  the signal any retry layer keys on (§4.7, requirement 5).
 
 Crucially, the builder must **persist** the build log
 (`LogStore::addBuildLog`, `local-store.cc:1629`) instead of discarding it.
@@ -893,7 +911,7 @@ needs from the protocol:
 * It offers **introspection**: an SSH "shell" (`list builds --running`,
   build history) and an HTTP API.
 
-This validates the RFC's direction and sharpens four requirements:
+This validates the RFC's direction and sharpens five requirements:
 
 1. **Backend-negotiated concurrency (not client slot locks).** The
    distributed-build *hook*'s per-machine, per-slot file locking and fixed
@@ -955,12 +973,33 @@ This validates the RFC's direction and sharpens four requirements:
    Blocker 2) are unaffected — this is a builder-liveness event, orthogonal
    to subscriber count.
 
+5. **Retry of builder-internal failures (right-sized, below the wire).** An
+   elastic backend's most common *non-build* failure is its own infrastructure:
+   a pod allocated with too little memory OOM-kills the build, a node is
+   evicted, a spot instance is reclaimed. nixbuild.net handles this by
+   re-running the build on a larger/healthy instance — adaptively bumping
+   memory and retrying. The protocol's job is **not** to mandate a retry policy
+   (that stays a non-goal, §3), but to enable retry at the right layer: (a) let
+   the backend retry **transparently below the wire** under the *same build
+   key* — the registry's lease/fencing seam (§4.3.5) is exactly what makes a
+   failed/evicted attempt re-dispatchable on the same key without
+   double-building or surfacing the failed attempt as canonical — and (b) when
+   the backend has *exhausted* what it can fix itself (the build needs more
+   memory than the largest pod, or a retry budget is spent), report a
+   **transient, resource-classified** `BuildResult` (§4.4) with a resource
+   hint, so the client or Hydra can decide to retry elsewhere rather than treat
+   it as a permanent build failure. Transparent backend retry is invisible to
+   the client (it just sees a slightly longer build); the wire only ever
+   carries the *give-up* signal, classified — which is also what keeps the
+   transient failure out of the reuse cache (§4.4).
+
 None of this requires Nix to *become* a scheduler (that stays a non-goal,
 and Hydra's job): it requires the protocol to (a) not impose client-side
 scheduling where the backend already does it, (b) multiplex many tagged
-build/log streams, (c) report reuse, and (d) support re-attach. A backend
-like nixbuild.net then "just works" as `--store ssh-ng://`, at full log
-fidelity, instead of being a clever workaround.
+build/log streams, (c) report reuse, (d) support re-attach, and (e) classify
+failures so a builder-internal failure is retryable rather than fatal. A
+backend like nixbuild.net then "just works" as `--store ssh-ng://`, at full
+log fidelity, instead of being a clever workaround.
 
 ### 4.8 Hydra compatibility (G7)
 
