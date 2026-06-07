@@ -142,19 +142,32 @@ rewrite. The normative seams (RFC §4.3.5, §8.1) the registry component bakes i
 - **Stock-daemon coordinator + relay** (`build/build-coordinator.{hh,cc}`) — a
   separate lazily-spawned per-store coordinator that hosts the registry, runs
   builds in forked children, fans their log out, and replays to late joiners;
-  reached from the daemon by a single additive, env-gated branch in the
-  `BuildDerivation` handler (expand/contract). Verified by a fake-SSH functional
-  test (`build-dedup-coordinator.sh`): two concurrent `ssh-ng://localhost` builds
-  of the same resolved derivation coalesce to **one** build (asserted by both
-  clients observing the same builder-process token), with the late joiner
-  receiving the pre-attach log via **replay**.
+  reached from the daemon by a single additive branch in the `BuildDerivation`
+  handler (expand/contract), gated by the **`build-coordinator` experimental
+  feature** (the planned contraction's first half), with the socket at
+  `$stateDir/coordinator.socket` (O1, `NIX_BUILD_COORDINATOR_SOCKET` override).
+  Hardened against an oversized-record allocation DoS on the control socket.
+- **Functional verification** — `build-dedup-coordinator.sh`: two concurrent
+  `ssh-ng://localhost` builds of the same resolved derivation coalesce to **one**
+  build (both clients observe the same builder-process token), the late joiner
+  receiving the pre-attach log via **replay**. `build-dedup-cancel.sh`: the
+  refcounted-cancel case C-a — the originator is killed while a joiner remains,
+  and the build **continues** to the joiner's completion (no originator
+  privilege, Blocker 2).
 
 ## 6. Deferred (evidence-/design-gated, not on the critical path)
 
-- **Promote the gate to an experimental feature** (the planned *contraction*):
-  replace the `NIX_BUILD_COORDINATOR_SOCKET` env gate with a real experimental
-  feature + the daemon `--coordinator` role (O1), and collapse the duplicated
-  direct-build branch once the coordinator is the proven default.
+- **Finish the contraction**: the daemon `--coordinator` supervised role (O1)
+  and collapsing the duplicated direct-build branch once the coordinator is the
+  proven default.
+- **Broaden the relay** beyond `BuildDerivation` to `BuildPaths` /
+  `BuildPathsWithResults` (resolve each derived path to its key) so top-level
+  `ssh-ng://` builds dedup too, not only hook-offloaded ones.
+- **Cross-user trust hardening (Blocker 1)**: the coordinator should recompute
+  the build key from the received drv (T3) and re-authorize every subscriber
+  against the resolved key via a real `BuildAuthPolicy` (replacing `AllowAll`),
+  needed once the per-machine coordinator spans users. Today the daemon's
+  pre-relay trust check plus same-uid peer-cred cover the single-user gate.
 - **`derivation-building-goal.cc` log-fidelity**: the relay currently re-emits
   the coordinator's frames as plain log lines; structured activity framing
   (guardrail §8.1 #5, the per-build top-level activity) is a refinement.

@@ -59,6 +59,12 @@ bool readN(int fd, char * buf, size_t n)
     return true;
 }
 
+/** A sanity cap on a single control/pipe record, so a buggy or hostile peer
+ *  cannot make us allocate an arbitrary amount from a 32-bit length prefix. A
+ *  START_OR_ATTACH carries one resolved derivation; log frames are line-sized.
+ *  256 MiB is far above any legitimate record. */
+constexpr uint32_t maxRecordLen = 256u << 20;
+
 /** Read one length-prefixed record; nullopt on clean EOF. */
 std::optional<std::string> readRecord(int fd)
 {
@@ -67,6 +73,8 @@ std::optional<std::string> readRecord(int fd)
         return std::nullopt;
     uint32_t len;
     memcpy(&len, lenBuf, 4);
+    if (len > maxRecordLen)
+        throw Error("coordinator control record too large (%d bytes)", len);
     std::string out(len, '\0');
     if (len && !readN(fd, out.data(), len))
         return std::nullopt;
@@ -172,6 +180,18 @@ std::string coordinatorStoreUri(Store & store)
             fs->logDir.get().string());
     }
     return store.config.getReference().render(/*withParams=*/true);
+}
+
+/** The coordinator control socket for `store`: the `NIX_BUILD_COORDINATOR_SOCKET`
+ *  override if set, else `$stateDir/coordinator.socket` (O1 — one per store). */
+std::string coordinatorSocketPath(Store & store)
+{
+    if (auto env = getEnv("NIX_BUILD_COORDINATOR_SOCKET"); env && !env->empty())
+        return *env;
+    if (auto * fs = dynamic_cast<const LocalFSStoreConfig *>(&store.config))
+        return (fs->stateDir.get() / "coordinator.socket").string();
+    // Non-local store: fall back to the state dir from settings.
+    return (settings.nixStateDir / "coordinator.socket").string();
 }
 
 /** Verify the connecting peer is the same uid as us (spike §3.7.1 — the
@@ -281,6 +301,16 @@ struct Coordinator
         uint64_t buildMode, trusted, replayWanted;
         src >> buildMode >> trusted >> replayWanted;
 
+        // The key is the resolved-drv path the child sent. For untrusted clients
+        // the daemon already recomputed it from the drv (daemon.cc, the CA
+        // `writeDerivation` path) before relaying, and the peer-cred check (§3.7.1)
+        // limits connections to same-uid daemon children — so under the current
+        // single-user experimental gate this is the daemon-validated key.
+        // DEFERRED for the cross-user coordinator (O1): the coordinator should
+        // itself recompute the key from the received drv (Blocker 1, T3) and
+        // re-authorize every subscriber against the resolved key via a real
+        // BuildAuthPolicy (replacing AllowAll), so a HIT cannot let one tenant
+        // attach to another's build.
         BuildRegistryKey key{drvPathStr};
         conn.key = key;
 
@@ -514,7 +544,6 @@ void spawnCoordinator(const std::string & socketPath, const std::string & storeU
 } // namespace
 
 BuildResult relayBuildToCoordinator(
-    const std::string & socketPath,
     Store & store,
     const StorePath & drvPath,
     const BasicDerivation & drv,
@@ -523,6 +552,7 @@ BuildResult relayBuildToCoordinator(
     bool trusted)
 {
     auto storeUri = coordinatorStoreUri(store);
+    auto socketPath = coordinatorSocketPath(store);
     // Connect, lazily spawning the coordinator if absent (decline-and-respawn).
     AutoCloseFD fd;
     for (int attempt = 0; attempt < 50; ++attempt) {

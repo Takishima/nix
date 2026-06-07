@@ -48,10 +48,10 @@ class Logger;
  *
  * The store the coordinator opens to run the build (the same physical store the
  * daemon serves) is derived from `store` itself, so it round-trips even for a
- * `--store /path` builder.
+ * `--store /path` builder. The coordinator socket is `NIX_BUILD_COORDINATOR_SOCKET`
+ * if set, else `$stateDir/coordinator.socket` (O1).
  */
 BuildResult relayBuildToCoordinator(
-    const std::string & socketPath,
     Store & store,
     const StorePath & drvPath,
     const BasicDerivation & drv,

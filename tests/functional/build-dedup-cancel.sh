@@ -18,6 +18,9 @@ TODO_NixOS
 
 [[ "${busybox-}" =~ busybox ]] || skipTest "no busybox"
 
+# Enable the coordinator on both peers (fake-SSH localhost reads the same config).
+enableFeatures build-coordinator
+
 unset NIX_STORE_DIR
 
 chmod -R +w "$TEST_ROOT/machine"* 2>/dev/null || true

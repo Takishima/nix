@@ -31,6 +31,10 @@ TODO_NixOS
 # busybox is the statically-linked builder for the isolated remote store.
 [[ "${busybox-}" =~ busybox ]] || skipTest "no busybox"
 
+# Enable the coordinator on both peers (the fake-SSH localhost daemon is a local
+# subprocess that reads the same test config).
+enableFeatures build-coordinator
+
 # Avoid the store dir being inside a build dir.
 unset NIX_STORE_DIR
 
