@@ -1045,10 +1045,17 @@ the serve side:
 * The new structured log channel and `QueryBuildLog` are designed so Hydra
   can **retire its out-of-band log handling** and consume logs the same way
   the `nix` CLI does — but only when it chooses to.
-* The extended `BuildResult` (`builderId`, `deduplicated`, structured
-  failure, `logRef`) is directly useful to Hydra's result accounting, so
-  the field set should be agreed with Hydra maintainers before freezing the
-  serve diagnostic core serialisation. (Tracked as an open question, §10.)
+* The extended `BuildResult` splits by *who* the field serves, not by Hydra
+  blanket-ownership. The **diagnostic core** (`logRef`, structured failure)
+  is generic — justified by any serve consumer (the `ssh://` build-remote
+  hook, `nix log`), so it freezes on Nix-side review with Hydra invited but
+  not blocking (audit in decisions Blocker 3). The **deferred fields**
+  (`builderId`, `deduplicated`) are *not* Hydra-specific either — Hydra picks
+  its own builder and runs its own queue, so they matter more to a client
+  that didn't choose the builder (orchestrator backends, `QueryActiveBuilds`);
+  they stay deferred because their semantics depend on the unfrozen Phase 3
+  design (§4.3, §8.1). Hydra's review of the serve layout is solicited
+  throughout, never a freeze gate. (Resolved, §10 Q4 / decisions Blocker 3.)
 
 The guiding constraint: **no change may require a coordinated Hydra/Nix
 flag day.** Old Hydra ↔ new Nix and new Hydra ↔ old Nix must both work,

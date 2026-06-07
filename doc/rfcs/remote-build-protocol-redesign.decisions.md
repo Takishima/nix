@@ -328,8 +328,11 @@ Hydra-specific. See the revision note.
 > once 2.9 ships, the layout is permanent. A field-by-field audit shows the
 > frozen core carries **nothing Hydra-specific** — every field is justified by a
 > **non-Hydra** serve consumer (the `ssh://` build-remote hook and
-> `nix log`/`nix build --store ssh://`). The Hydra-shaped fields (`builderId`,
-> `deduplicated`, classification) are already in the deferred set. So the risk
+> `nix log`/`nix build --store ssh://`). The remaining fields (`builderId`,
+> `deduplicated`, classification) are already in the deferred set — deferred not
+> because they are *Hydra*-specific but because their semantics depend on the
+> unfrozen Phase 3 design (and are if anything elastic-backend/introspection-shaped:
+> Hydra picks its own builder and runs its own queue). So the risk
 > the Hydra gate guarded — enshrining a permanent layout the primary consumer
 > cannot use — is instead covered by the core being generic, by criterion 2 (a
 > real in-tree consumer exercises it), and by the soak. Hydra review stays
@@ -349,9 +352,16 @@ Hydra-specific. See the revision note.
 > | `logTail` | yes | explicitly kept for the **non-Hydra** `ssh://` hook (fail-loud, G8) — see the rejected-alternative "Drop `logTail`" note above |
 >
 > **Scope:** this revision applies **only to the frozen diagnostic core.** The
-> **deferred set** (`builderId`/`deduplicated`/classification) is genuinely
-> Hydra-shaped and Phase-3-dependent, so when *its* freeze comes up, Hydra
-> coordination may still warrant being a gate — a separate, later call.
+> **deferred set** (`builderId`/`deduplicated`/classification) stays deferred
+> because its semantics depend on the unfrozen Phase 3 coordinator/dedup +
+> elastic-backend design — a **design-maturity** gate (internal Nix work), *not*
+> a Hydra one. The earlier framing of these as "Hydra-shaped" was imprecise:
+> Hydra picks its own builder (so `builderId` is largely redundant for it) and
+> runs its own queue (so `deduplicated` is at most informational); they matter
+> more to a client that did *not* choose the builder (orchestrator backends,
+> `QueryActiveBuilds`). So when *its* freeze comes up the gate is "Phase 3
+> settled," with Hydra review solicited on the same non-blocking basis as the
+> core — there is no standing external-Hydra freeze blocker.
 
 ### 2. Rejected alternatives
 
@@ -477,10 +487,10 @@ Hydra-specific. See the revision note.
   out of scope of the RFC itself) to solicit review *during the soak*; land the
   characterisation tests and the unstable-version implementation of the
   diagnostic core in Phase 1; **do not bump `SERVE_PROTOCOL_VERSION` to 2.9 until
-  the four freeze criteria are met.** What remains genuinely *external* is now
-  only the deferred serve set's later follow-on (F-WIRE gate **H3**), opened once
-  Phase 3 dedup semantics settle; the diagnostic core itself freezes on
-  Nix-side criteria. The full map — and why `hydra-queue-runner` speaking only
+  the four freeze criteria are met.** No hard *external-Hydra* blocker remains:
+  the deferred serve set (F-WIRE gate **H3**) freezes once the Phase 3 design
+  settles — a *design-maturity* gate (internal), not a Hydra dependency — and the
+  diagnostic core itself freezes on Nix-side criteria. The full map — and why `hydra-queue-runner` speaking only
   the serve protocol means the worker-protocol Build Session ops carry no Hydra
   gate — is in
   [the validation plan, "The external gates (Hydra)"](./remote-build-protocol-redesign.validation.md#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).

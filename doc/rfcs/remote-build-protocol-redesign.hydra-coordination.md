@@ -5,7 +5,7 @@
 | **Status**       | Draft for posting (Hydra ↔ Nix coordination thread) |
 | **Audience**     | Hydra maintainers (esp. `hydra-queue-runner`), Nix serve-protocol maintainers |
 | **Realizes**     | validation plan [Workstream D / D4](./remote-build-protocol-redesign.validation.md); decisions [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51) |
-| **Goal of thread** | **solicit** Hydra review of the serve diagnostic-core field set + byte order *during the soak* (input we want, not a freeze blocker), and flag the *later, genuinely-blocking* round — agreeing the deferred serve set (`deduplicated`/`builderId`) once Phase 3 settles |
+| **Goal of thread** | **solicit** Hydra review of the serve diagnostic-core field set + byte order *during the soak* (input we want, not a freeze blocker), and flag the *later* round — agreeing the deferred serve set (`deduplicated`/`builderId`) once Phase 3 settles (gated on that design maturing, not on Hydra) |
 
 > This is the **opening post** for the coordination thread the RFC deliberately
 > left out of its own scope (RFC §10 Q4: "the Hydra coordination *thread* itself
@@ -50,10 +50,13 @@ freeze blockers, revised 2026-06):
 
 We keep the fields behind an **unstable** version until the Nix-side criteria +
 soak hold; old Hydra keeps working byte-for-byte at ≤2.8 the entire time
-regardless. The round where we **do** need to agree a layout together is later:
-the **deferred set** (`deduplicated`/`builderId`) once Phase 3 dedup semantics
-settle — those fields are genuinely Hydra-shaped (see the deferred-fields note
-below).
+regardless. The round where we'll want to converge on a layout is later: the
+**deferred set** (`deduplicated`/`builderId`) once Phase 3 dedup semantics
+settle. Those fields are deferred because their *semantics* aren't frozen yet
+(not because they're Hydra-specific — if anything they're more
+elastic-backend/introspection-shaped; see the deferred-fields note below), so
+that round is gated on the Phase 3 design, with your review again solicited
+rather than required.
 
 ---
 
@@ -107,11 +110,15 @@ elastic-backend designs): `builderId`, `deduplicated`, and the elastic-backend
 failure-classification fields (a transient/retryable flag, failure-class, and a
 resource hint; RFC §4.4). These are listed only so Hydra sees the shape that is
 coming; **none is part of the frozen ask** in *this* round. They become a
-**later follow-on field-set agreement on this same serve channel** — gate **H3**
-in the validation plan, which freezes the Phase-3 "Build Session" serve surface
-(`F-WIRE`) — opened only once the Phase-3 dedup semantics settle. So this thread
-carries two rounds on one wire: the diagnostic core now (sign-off + queue-runner
-branch), the deferred set later. (The worker-protocol versions of these ops are
+**later field-set round on this same serve channel** — gate **H3** in the
+validation plan, which freezes the Phase-3 "Build Session" serve surface
+(`F-WIRE`) — gated on the Phase-3 dedup/elastic-backend design settling (a
+*design-maturity* gate, internal — these fields aren't Hydra-specific; Hydra
+picks its own builder and runs its own queue, so they matter more to a client
+that didn't choose the builder, e.g. orchestrator backends / `QueryActiveBuilds`).
+So this thread carries two rounds on one wire: the diagnostic core now (review),
+the deferred set later — your review solicited in both, blocking in neither. (The
+worker-protocol versions of these ops are
 not part of any Hydra ask — `hydra-queue-runner` speaks only the serve protocol.
 Full map: [validation plan, "The external gates (Hydra)"](./remote-build-protocol-redesign.validation.md#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).)
 
@@ -181,7 +188,8 @@ The CA-realisation fields Hydra already consumes
 **Why none of these is a Hydra blocker:** compatibility is unconditional via
 `min()`, and a field-by-field audit shows the frozen core is non-Hydra-specific
 (every field is justified by the non-Hydra `ssh://` hook / `nix log`). The
-Hydra-shaped fields are all in the deferred set, whose freeze is a later round
+remaining fields are all in the deferred set, whose freeze is a later round —
+gated on the Phase 3 design settling (design-maturity, internal), not on Hydra
 (decisions [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51)).
 
 ---
