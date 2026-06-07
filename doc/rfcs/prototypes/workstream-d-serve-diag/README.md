@@ -78,17 +78,21 @@ make dump    # print golden hex (to regenerate the constants in tests.cc)
 | new | new | {2,9} | full diagnostic core active |
 | any client | builder advertising `{3,0}` | — | **client rejects at handshake (`major != 2`)** — why the core is `{2,9}`, not `{3,0}` |
 
-## What this does NOT do (out of scope / external)
+## What this does NOT do (out of scope)
 
-The four **freeze criteria** for serve diagnostic core are gates this code cannot satisfy by
-itself — they are the point of the workstream's external dependency:
+The **freeze criteria** for the serve diagnostic core are gates this throw-away
+code does not satisfy by itself. **Revised 2026-06:** they are now all Nix-side
+(the frozen core is audited non-Hydra-specific; Hydra review is solicited during
+the soak, not a blocker — see decisions Blocker 3 and the validation plan's
+"The external gates (Hydra)"):
 
-- **D3.1** — a *named* Hydra queue-runner maintainer signs off on the exact field
-  set and byte order. (The single biggest external dependency; the opening ask is
-  drafted in [`hydra-coordination.md`](../../remote-build-protocol-redesign.hydra-coordination.md), **D4**.)
-- **D3.2** — a `hydra-queue-runner` branch consumes `QueryBuildLog` + the
-  structured fields and drops its out-of-band log capture, validated against a
-  new-Nix builder.
+- **D3.1** — the libstore/serve-protocol maintainer signs off on the exact field
+  set and byte order. (Hydra review is solicited via
+  [`hydra-coordination.md`](../../remote-build-protocol-redesign.hydra-coordination.md), **D4**, during the soak — input, not a blocker.)
+- **D3.2** — an *in-tree* serve consumer exercises the core end-to-end: `nix log`
+  over the serve path + the `ssh://` `build-remote` hook's fail-loud render. (A
+  `hydra-queue-runner` branch adopting `QueryBuildLog` is welcome on Hydra's own
+  schedule, but is not required for the freeze.)
 - **D3.3** — these golden tests, ported into `src/libstore-tests`, prove the
   back-compat matrix both ways. (This prototype is exactly that proof, standalone.)
   **Done:** ported to `src/libstore-tests/serve-diag-core.cc` (9 gtest cases

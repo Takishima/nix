@@ -5,14 +5,18 @@
 | **Status**       | Draft for posting (Hydra ↔ Nix coordination thread) |
 | **Audience**     | Hydra maintainers (esp. `hydra-queue-runner`), Nix serve-protocol maintainers |
 | **Realizes**     | validation plan [Workstream D / D4](./remote-build-protocol-redesign.validation.md); decisions [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51) |
-| **Goal of thread** | a *named* Hydra maintainer signs off on the serve diagnostic core field set + byte order, and a `hydra-queue-runner` branch consumes it — the two blocking serve diagnostic-core freeze criteria |
+| **Goal of thread** | **solicit** Hydra review of the serve diagnostic-core field set + byte order *during the soak* (input we want, not a freeze blocker), and flag the *later, genuinely-blocking* round — agreeing the deferred serve set (`deduplicated`/`builderId`) once Phase 3 settles |
 
 > This is the **opening post** for the coordination thread the RFC deliberately
 > left out of its own scope (RFC §10 Q4: "the Hydra coordination *thread* itself
 > remains out of scope for this document"). Everything technical is already
-> decided on the Nix side; what is needed here is Hydra-side review and a working
-> consumer branch. Copy/adapt this into the actual discussion (GitHub
-> Discussions / Discourse / matrix) when posting.
+> decided on the Nix side. **Note (revised 2026-06):** the diagnostic core
+> freezes on Nix-side criteria + a soak — a field-by-field audit showed it
+> carries nothing Hydra-specific (every field is justified by the non-Hydra
+> `ssh://` hook / `nix log`), so your sign-off is **valuable input we're
+> soliciting, not a blocker**. We'd genuinely like your review while the layout
+> is still unstable and cheap to change. Copy/adapt this into the actual
+> discussion (GitHub Discussions / Discourse / matrix) when posting.
 
 ---
 
@@ -32,17 +36,24 @@ chooses to. **Nothing breaks for Hydra on day one**: the bump is gated behind a
 `min(client, server)` handshake, so old Hydra ↔ new Nix and new Hydra ↔ old Nix
 both keep working byte-for-byte at version ≤ 2.8.
 
-**Two things we need from a Hydra maintainer** (the only blockers to freezing
-serve diagnostic core):
+**Two things we'd value from a Hydra maintainer** (review we're soliciting — *not*
+freeze blockers, revised 2026-06):
 
-1. **Sign off on the exact field set and byte order** below (or tell us what to
-   change). We will name you as the sign-off owner in the decision record.
-2. **A `hydra-queue-runner` branch** that (a) calls `QueryBuildLog` + consumes
-   the structured log frames to drop its out-of-band log capture, and (b) reads
-   the extended `BuildResult`, validated against a new-Nix builder.
+1. **Eyes on the exact field set and byte order** below — tell us if anything is
+   wrong *while it's still unstable and cheap to change*. We'll record your review
+   in the decision record. (We freeze on Nix-side sign-off + an in-tree consumer +
+   golden tests + a soak; your review rides the soak.)
+2. **Whenever it suits you, a `hydra-queue-runner` branch** that calls
+   `QueryBuildLog` + consumes the structured log frames to drop its out-of-band
+   log capture, and reads the extended `BuildResult`. This is **opt-in adoption on
+   your schedule** (G7 "Hydra is never forced"), not a precondition of our freeze.
 
-Until both land (plus golden tests + one release-cycle soak), we keep the fields
-behind an **unstable** version and do **not** bump `SERVE_PROTOCOL_VERSION`.
+We keep the fields behind an **unstable** version until the Nix-side criteria +
+soak hold; old Hydra keeps working byte-for-byte at ≤2.8 the entire time
+regardless. The round where we **do** need to agree a layout together is later:
+the **deferred set** (`deduplicated`/`builderId`) once Phase 3 dedup semantics
+settle — those fields are genuinely Hydra-shaped (see the deferred-fields note
+below).
 
 ---
 
@@ -153,21 +164,25 @@ The CA-realisation fields Hydra already consumes
 
 ---
 
-## What "frozen" requires (all four; we will not bump the wire version until they hold)
+## What "frozen" requires (revised 2026-06 — all Nix-side; we will not bump the wire version until they hold)
 
-1. **A named Hydra maintainer** has reviewed and signed off on the exact frozen
-   field set and byte order. *(This thread exists to get that name.)*
-2. A **`hydra-queue-runner` branch** consumes `QueryBuildLog` + the structured
-   log frames to drop its out-of-band log capture **and** reads the extended
-   `BuildResult`, validated against a new-Nix builder.
+1. **The libstore/serve-protocol maintainer** has signed off on the exact frozen
+   field set and byte order.
+2. **At least one in-tree serve consumer** exercises the core end-to-end: `nix
+   log` over the serve path (`QueryBuildLog`) **and** the `ssh://` `build-remote`
+   hook rendering `logTail`/`failurePhase`/`exitCode` on failure. *(This is what
+   proves the layout against a real consumer — Hydra's branch is welcome but not
+   required for it.)*
 3. **Golden/characterisation tests** prove round-trip at 2.8 and 2.9 **and** that
    a 2.8 peer ignores 2.9 fields (full back-compat matrix, both directions).
 4. The field set has soaked on the **unstable version for ≥1 release cycle** with
-   no layout change.
+   no layout change — *the window in which we want your review (above)*.
 
-Meanwhile (1)/(3) Nix-side work — the unstable-version implementation and the
-golden tests — proceeds now so that by the time Hydra is ready, only sign-off and
-the queue-runner branch remain.
+**Why none of these is a Hydra blocker:** compatibility is unconditional via
+`min()`, and a field-by-field audit shows the frozen core is non-Hydra-specific
+(every field is justified by the non-Hydra `ssh://` hook / `nix log`). The
+Hydra-shaped fields are all in the deferred set, whose freeze is a later round
+(decisions [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51)).
 
 ---
 
@@ -185,8 +200,10 @@ the queue-runner branch remain.
 4. **Migration appetite:** would you prefer the queue-runner branch to (a) adopt
    `QueryBuildLog` only first (smallest change), then (b) the structured
    `BuildResult` later — or both at once?
-5. **Who is the sign-off owner** for the frozen serve diagnostic core layout on the Hydra
-   side?
+5. **Who's our best reviewer** for the diagnostic-core layout on the Hydra side —
+   and, looking ahead, the right person to agree the *deferred* set
+   (`deduplicated`/`builderId`) with us once Phase 3 settles (that later round is
+   where we genuinely need to converge together)?
 6. **Version number:** we propose shipping the core as serve **2.9** (minor bump,
    major stays 2) rather than `{3,0}`, because the client handshake rejects a
    different major before `min()` and a `{3,0}` builder would break every already

@@ -1253,14 +1253,20 @@ The "checked before subscribing" rule above is sharpened to:
   `AddToStoreNar = 9` — so no existing field changes meaning and a 2.8 reader
   stops before the new tail.
 * **Concrete freeze criteria — bump `SERVE_PROTOCOL_VERSION` to `(2 << 8 | 9)`
-  only when all hold:** (1) a **named Hydra maintainer** has signed off on the
-  exact field set and byte order; (2) a `hydra-queue-runner` branch consumes
-  `QueryBuildLog` + the structured log frames (§4.2) to drop its out-of-band log
-  capture *and* reads the extended `BuildResult`, validated against a new-Nix
-  builder; (3) golden/characterisation tests prove round-trip at 2.8 and 2.9 and
-  that a 2.8 peer ignores 2.9 fields (back-compat matrix, both directions); and
-  (4) the field set has soaked on the unstable version for ≥1 release cycle with
-  no layout change.
+  only when all hold:** (1) the **libstore/serve-protocol maintainer** has signed
+  off on the exact field set and byte order; (2) at least one **in-tree serve
+  consumer** exercises the core end-to-end — `nix log` over the serve path
+  (`QueryBuildLog`, §4.5) *and* the `ssh://` `build-remote` hook rendering
+  `logTail`/`failurePhase`/`exitCode` on failure (fail-loud, §4.9); (3)
+  golden/characterisation tests prove round-trip at 2.8 and 2.9 and that a 2.8
+  peer ignores 2.9 fields (back-compat matrix, both directions); and (4) the
+  field set has soaked on the unstable version for ≥1 release cycle with no layout
+  change. **A named Hydra maintainer's sign-off and a `hydra-queue-runner`
+  consumer branch are strongly solicited during the soak but are *not* freeze
+  blockers** — a field-by-field audit shows the frozen core is non-Hydra-specific
+  (every field is justified by the non-Hydra `ssh://` hook / `nix log`), and
+  compatibility is handled unconditionally by the `min()` handshake regardless of
+  Hydra. See decisions [Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51).
 
 ## 8. Phased implementation plan
 
@@ -1506,9 +1512,12 @@ addition.**
    ([Blocker 3](./remote-build-protocol-redesign.decisions.md#blocker-3--the-hydra-field-set--serve-diagnostic-core-freeze-rfc-q4-7-spike-51)).
    Freeze a stable diagnostic core (`logRef`, `failurePhase`/`exitCode`/
    `logTail`, `QueryBuildLog`); defer `builderId`/`deduplicated` to the unstable
-   version; bump `SERVE_PROTOCOL_VERSION` to 2.9 only on four named freeze
-   criteria (incl. a named Hydra maintainer's sign-off). See §7. The Hydra
-   coordination *thread* itself remains out of scope for this document.
+   version; bump `SERVE_PROTOCOL_VERSION` to 2.9 on four Nix-side freeze criteria
+   (maintainer sign-off + an in-tree consumer + golden tests + soak). **Hydra
+   sign-off is solicited during the soak but is not a freeze blocker** (revised
+   2026-06): the frozen core is audited non-Hydra-specific, and compatibility is
+   handled unconditionally by `min()`. See §7. The Hydra coordination *thread*
+   itself remains out of scope for this document.
 5. **`QueryActiveBuilds` privacy.** ✅ **RESOLVED**
    ([O6](./remote-build-protocol-redesign.decisions.md#operational-decision-o6--queryactivebuilds-privacy-default-rfc-q5-spike-6-q6)).
    Default: untrusted callers see **only their own authorized builds and nothing

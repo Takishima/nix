@@ -294,19 +294,64 @@ explicitly-unstable provisional gate whose byte layout is *not* a back-compat
 promise.
 
 **Freeze criteria for serve diagnostic core (all must hold):**
-1. A **named Hydra maintainer** has reviewed and signed off on the exact frozen
-   field set and byte order.
-2. A `hydra-queue-runner` branch (a) consumes `QueryBuildLog` + the structured
-   log frames (§4.2) to **drop its out-of-band log capture**, and (b) reads the
-   extended `BuildResult`, both validated against a new-Nix builder.
+1. **Nix-side sign-off** by the libstore/serve-protocol maintainer on the exact
+   frozen field set and byte order.
+2. **At least one in-tree serve consumer exercises the core end-to-end:**
+   `nix log` over the serve path (`QueryBuildLog`, Gap A/§4.5) **and** the
+   `ssh://` `build-remote` hook rendering `logTail`/`failurePhase`/`exitCode` on
+   failure (fail-loud, G8). This proves the layout works against a real consumer
+   without waiting on an external project.
 3. **Golden/characterisation serialization tests** (`src/libstore-tests`,
    `src/json-schema-checks`) prove round-trip at 2.8 and 2.9 **and** that a 2.8
    peer ignores 2.9 fields — the full back-compat matrix, both directions.
 4. The field set has been carried on the **unstable version for ≥1 release
-   cycle** with no layout change.
+   cycle** with no layout change, during which Hydra review is actively solicited
+   (see below).
 
 Only then bump `SERVE_PROTOCOL_VERSION` to `(2 << 8 | 9)` and treat the layout
 as frozen.
+
+**A named Hydra maintainer's sign-off and a working `hydra-queue-runner`
+consumer branch are strongly solicited but are NOT freeze blockers** (revised
+2026-06). We open the coordination thread (§5 follow-up) and request review
+during the soak; if Hydra flags a problem while the version is still *unstable*
+we revise before freezing — which is cheap. But an absent or slow Hydra response
+does **not** hold the bump, because the frozen core contains nothing
+Hydra-specific. See the revision note.
+
+> **Revision (2026-06) — the Hydra sign-off and the queue-runner branch are
+> downgraded from freeze *blockers* to solicited *input*.** The two were
+> originally hard preconditions of the 2.9 bump. They are not needed for
+> compatibility — that is unconditionally handled by the `min()` handshake
+> (criterion 3), so old client ↔ new builder keeps working at 2.8 whether or not
+> Hydra ever responds. What the gate actually protected was *irreversibility*:
+> once 2.9 ships, the layout is permanent. A field-by-field audit shows the
+> frozen core carries **nothing Hydra-specific** — every field is justified by a
+> **non-Hydra** serve consumer (the `ssh://` build-remote hook and
+> `nix log`/`nix build --store ssh://`). The Hydra-shaped fields (`builderId`,
+> `deduplicated`, classification) are already in the deferred set. So the risk
+> the Hydra gate guarded — enshrining a permanent layout the primary consumer
+> cannot use — is instead covered by the core being generic, by criterion 2 (a
+> real in-tree consumer exercises it), and by the soak. Hydra review stays
+> valuable and is actively solicited during the soak; it simply no longer sits on
+> the critical path. (This also keeps us symmetric with G7 "Hydra is never
+> forced": we do not force Hydra to adopt, and we do not let Hydra's schedule
+> force *us*.)
+>
+> **The audit (why the frozen core is non-Hydra-specific):**
+>
+> | Frozen field / op | Justified without Hydra? | By what non-Hydra consumer |
+> |---|---|---|
+> | `logRef` | yes | `nix log` / any serve client fetching a persisted log needs the persist key (`LogStore::getBuildLog`) |
+> | `QueryBuildLog` (`Command = 10`) | yes | this *is* `nix log` over the serve path (Gap A/§4.5) — the `nix` CLI, not just Hydra |
+> | `failurePhase` | yes | fail-loud (G8) for any remote failure; the same data local builds already render (`derivation-building-goal.cc:1157`) |
+> | `exitCode` | yes | every client rendering a remote failure wants the builder's exit status |
+> | `logTail` | yes | explicitly kept for the **non-Hydra** `ssh://` hook (fail-loud, G8) — see the rejected-alternative "Drop `logTail`" note above |
+>
+> **Scope:** this revision applies **only to the frozen diagnostic core.** The
+> **deferred set** (`builderId`/`deduplicated`/classification) is genuinely
+> Hydra-shaped and Phase-3-dependent, so when *its* freeze comes up, Hydra
+> coordination may still warrant being a gate — a separate, later call.
 
 ### 2. Rejected alternatives
 
@@ -394,10 +439,13 @@ as frozen.
 
 ### 4. Residual risk and the guarding test
 
-- **Risk:** freezing the core before Hydra's branch is proven could still miss a field
-  Hydra needs. Mitigated by freeze criterion 2 (a working queue-runner branch is
-  a *precondition* of the freeze) and criterion 4 (a soak cycle on the unstable
-  version).
+- **Risk:** freezing the core could still miss a field a real consumer needs.
+  Mitigated by the audit (the frozen core is the generic, non-Hydra-specific set —
+  see the revision note), by freeze criterion 2 (a real **in-tree** serve
+  consumer — `nix log` + the `ssh://` hook — exercises the layout end-to-end
+  before freeze), by criterion 4 (a soak cycle on the unstable version), and by
+  actively soliciting Hydra review during that soak while the layout is still
+  cheap to change.
 - **Risk:** `logRef` asserts persistence but a builder might not actually have
   retained the log (e.g. `keepLog` still suppressed on an older path). Mitigated
   by pairing `logRef` with the explicit "persisted" assertion (RFC §4.4) and by
@@ -420,19 +468,21 @@ as frozen.
 
 ### 5. Owner + follow-up
 
-- **Owner:** **Hydra queue-runner maintainer** (sign-off authority on the frozen
-  field set — to be named when the Hydra coordination thread opens; this record
-  assigns the *role* and the gate), with a **libstore/serve-protocol maintainer**
-  as the Nix-side counterpart who owns the serializer and the version bump.
+- **Owner:** **libstore/serve-protocol maintainer** holds sign-off authority on
+  the frozen field set + byte order and owns the serializer and the version bump
+  (freeze criterion 1). A **Hydra queue-runner maintainer** is a strongly-solicited
+  *reviewer* during the soak — named when the coordination thread opens — but is
+  no longer a freeze blocker (see the revision note).
 - **Follow-up:** open the Hydra coordination thread (RFC Q4 says coordination is
-  out of scope of the RFC itself); land the characterisation tests and the
-  unstable-version implementation of the diagnostic core in Phase 1; **do not bump
-  `SERVE_PROTOCOL_VERSION` to 2.9 until the four freeze criteria are met.** The
-  precise enumeration of what is owed *externally* — criteria 1 and 2 as gates
-  **H1** (named sign-off) and **H2** (queue-runner branch), the deferred serve
-  set as F-WIRE's later follow-on **H3** on the same serve channel, and why
-  `hydra-queue-runner` speaking only the serve protocol means the worker-protocol
-  Build Session ops carry no Hydra gate — is consolidated in
+  out of scope of the RFC itself) to solicit review *during the soak*; land the
+  characterisation tests and the unstable-version implementation of the
+  diagnostic core in Phase 1; **do not bump `SERVE_PROTOCOL_VERSION` to 2.9 until
+  the four freeze criteria are met.** What remains genuinely *external* is now
+  only the deferred serve set's later follow-on (F-WIRE gate **H3**), opened once
+  Phase 3 dedup semantics settle; the diagnostic core itself freezes on
+  Nix-side criteria. The full map — and why `hydra-queue-runner` speaking only
+  the serve protocol means the worker-protocol Build Session ops carry no Hydra
+  gate — is in
   [the validation plan, "The external gates (Hydra)"](./remote-build-protocol-redesign.validation.md#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).
 
 ---
@@ -981,8 +1031,10 @@ hard-cap `maxJobs` semantics unchanged. Lands in **Phase 6**.
 - **Minimum to freeze now vs. behind an unstable version?** *Freeze now:* the
   **build-key definition** and **per-observable authorization rule** (Blocker 1)
   — they define what "the same build" means and who may observe it, and are
-  expensive to change later. *Freeze with Hydra:* the serve diagnostic core **diagnostic
-  core** (`logRef`, `failurePhase`, `exitCode`, `logTail`, `QueryBuildLog`).
+  expensive to change later. *Freeze on Nix-side criteria (Hydra review solicited,
+  not blocking):* the serve **diagnostic core** (`logRef`, `failurePhase`,
+  `exitCode`, `logTail`, `QueryBuildLog`) — the audit shows it is generic, so it
+  freezes on maintainer sign-off + an in-tree consumer + golden tests + soak.
   *Stay unstable:* `builderId`, `deduplicated`, the RFC §4.4
   failure-classification fields (transient/failure-class/resource hint), and the
   CA `resolving`-merge wire details, all bound to the still-spiking Phase 3
@@ -999,4 +1051,4 @@ hard-cap `maxJobs` semantics unchanged. Lands in **Phase 6**.
 |---|---|---|---|---|
 | 1 — CA key-merge trust | Key = hash of client-resolved drv (coordinator-derived); per-observable authz re-derived per-subscriber against the resolved key, before registry lookup; no existence oracle; `resolving` merge re-authorizes at promotion | **Yes** (key + authz rule) | Security reviewer + libstore/protocol | ✅ CA `resolving`→promote prototype + trust tests **done** (T1–T3 green, Workstream B; [validation.md](./remote-build-protocol-redesign.validation.md)) |
 | 2 — Refcounted cancel | Lifetime = refcount + explicit-root only; no originator privilege; per-subscriber timeout under a max envelope; keep-failed = OR; cancel = scoped unsubscribe-with-error | No wire (coordinator-internal); table agreed pre-Phase-3 | libstore/protocol | ✅ `hasRootReasonToContinue` + per-subscriber deadlines + `build-dedup-cancel` matrix **done** (C-a…C-f green, Workstream C) |
-| 3 — Hydra / serve diagnostic core | Freeze diagnostic core (`logRef`, phase/exit/tail, `QueryBuildLog`); defer `builderId`/`deduplicated` to unstable; bump to 2.9 only on the four freeze criteria | Diagnostic core, gated by Hydra sign-off | Hydra queue-runner maintainer (TBD) + libstore/serve-protocol | ⏳ characterisation tests **done** (D2/D3.3 green, Workstream D); Hydra coordination thread + soak on unstable still owed (D3.1/D3.2/D3.4, external) |
+| 3 — Hydra / serve diagnostic core | Freeze diagnostic core (`logRef`, phase/exit/tail, `QueryBuildLog`); defer `builderId`/`deduplicated` to unstable; bump to 2.9 on the four freeze criteria (Nix-side sign-off + in-tree consumer + golden tests + soak). **Hydra sign-off solicited, not blocking** (revised 2026-06 — the core is audited non-Hydra-specific) | Diagnostic core, on Nix-side criteria | libstore/serve-protocol (sign-off) + Hydra queue-runner maintainer (solicited reviewer) | ⏳ characterisation tests **done** (D2/D3.3 green, Workstream D); in-tree consumer + soak still owed; Hydra review solicited during soak (non-blocking) |
