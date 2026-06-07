@@ -593,6 +593,54 @@ VERSIONED_CHARACTERIZATION_TEST(
         t;
     }))
 
+/* Freeze criterion 3 (decisions Blocker 3), worker side: a peer WITHOUT the
+   `build-log-query` feature reads a BuildResult written WITH it, decodes the
+   base fields, and leaves the appended diagnostic-core tail unconsumed — the
+   diagnostic core is purely additive and feature-gated. */
+TEST_F(WorkerProtoTest, buildResult_buildLogQuery_readsBackCompatWithoutFeature)
+{
+    BuildResult full{
+        .inner{BuildResult::Failure{{
+            .status = BuildResult::Failure::OutputRejected,
+            .msg = HintFmt("no idea why"),
+        }}},
+        .logRef = "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
+        .failurePhase = "build",
+        .exitCode = 1,
+        .logTail = "error: command failed\n",
+    };
+    BuildResult base = full;
+    base.logRef = "";
+    base.failurePhase = "";
+    base.exitCode = 0;
+    base.logTail = "";
+
+    // Same version on both sides; only the `build-log-query` feature differs.
+    auto withFeature = WorkerProto::Version{
+        .number = {.major = 1, .minor = 38},
+        .features = {"realisation-with-path-not-hash", "build-log-query"},
+    };
+    auto withoutFeature = WorkerProto::Version{
+        .number = {.major = 1, .minor = 38},
+        .features = {"realisation-with-path-not-hash"},
+    };
+
+    StringSink withTail;
+    WorkerProto::write(store, WorkerProto::WriteConn{.to = withTail, .version = withFeature}, full);
+    StringSink withoutTail;
+    WorkerProto::write(store, WorkerProto::WriteConn{.to = withoutTail, .version = withoutFeature}, base);
+
+    ASSERT_GT(withTail.s.size(), withoutTail.s.size());
+    EXPECT_EQ(withTail.s.compare(0, withoutTail.s.size(), withoutTail.s), 0);
+
+    // A feature-less reader decodes the base value and stops at the boundary.
+    StringSource source{withTail.s};
+    BuildResult got =
+        WorkerProto::Serialise<BuildResult>::read(store, WorkerProto::ReadConn{.from = source, .version = withoutFeature});
+    EXPECT_EQ(got, base);
+    EXPECT_EQ(source.pos, withoutTail.s.size());
+}
+
 VERSIONED_CHARACTERIZATION_TEST(
     WorkerProtoTest,
     keyedBuildResult_1_29,

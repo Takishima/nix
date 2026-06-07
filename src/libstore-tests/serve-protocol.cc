@@ -369,6 +369,48 @@ VERSIONED_CHARACTERIZATION_TEST(
         t;
     }))
 
+/* Freeze criterion 3 (decisions Blocker 3): a peer at the stable serve 2.8
+   reads a 2.9-written BuildResult, decodes exactly the base fields, and leaves
+   the appended diagnostic-core tail unconsumed — i.e. the 2.9 layout is purely
+   additive and no existing field changes meaning. This is the production
+   counterpart of the model-level check in `serve-diag-core.cc`. */
+TEST_F(ServeProtoTest, buildResult_2_9_readsBackCompatAt_2_8)
+{
+    BuildResult full{
+        .inner{BuildResult::Failure{{
+            .status = BuildResult::Failure::OutputRejected,
+            .msg = HintFmt("no idea why"),
+        }}},
+        .logRef = "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
+        .failurePhase = "build",
+        .exitCode = 1,
+        .logTail = "error: command failed\n",
+    };
+    // The same result without the diagnostic core (what a 2.8 peer can represent).
+    BuildResult base = full;
+    base.logRef = "";
+    base.failurePhase = "";
+    base.exitCode = 0;
+    base.logTail = "";
+
+    StringSink at29;
+    ServeProto::write(store, ServeProto::WriteConn{.to = at29, .version = ServeProto::Version{2, 9}}, full);
+    StringSink at28;
+    ServeProto::write(store, ServeProto::WriteConn{.to = at28, .version = ServeProto::Version{2, 8}}, base);
+
+    // 2.9 bytes == 2.8 bytes of the base value + an appended diagnostic tail.
+    ASSERT_GT(at29.s.size(), at28.s.size());
+    EXPECT_EQ(at29.s.compare(0, at28.s.size(), at28.s), 0);
+
+    // A 2.8 reader of the 2.9 bytes decodes the base value and stops exactly at
+    // the 2.8 boundary, leaving the diagnostic tail unconsumed.
+    StringSource source{at29.s};
+    BuildResult got =
+        ServeProto::Serialise<BuildResult>::read(store, ServeProto::ReadConn{.from = source, .version = ServeProto::Version{2, 8}});
+    EXPECT_EQ(got, base);
+    EXPECT_EQ(source.pos, at28.s.size());
+}
+
 VERSIONED_CHARACTERIZATION_TEST(
     ServeProtoTest,
     unkeyedValidPathInfo_2_3,
