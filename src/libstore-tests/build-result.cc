@@ -92,6 +92,20 @@ INSTANTIATE_TEST_SUITE_P(
                 .cpuUser = std::chrono::microseconds(500s),
                 .cpuSystem = std::chrono::microseconds(604s),
             },
+        },
+        std::pair{
+            // Deferred dedup/fleet set (RFC §4.3, gate H3).
+            "deduplicated",
+            BuildResult{
+                .inner{BuildResult::Success{
+                    .status = BuildResult::Success::Built,
+                }},
+                .timesBuilt = 1,
+                .startTime = 30,
+                .stopTime = 50,
+                .deduplicated = true,
+                .builderId = "builder-7",
+            },
         }));
 
 } // namespace nix

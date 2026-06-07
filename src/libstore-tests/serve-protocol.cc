@@ -314,7 +314,8 @@ VERSIONED_CHARACTERIZATION_TEST(
     }))
 
 /* Serve 2.9 (unstable, `serve-build-logs`): the structured diagnostic core
-   (logRef/failurePhase/exitCode/logTail) is appended after `builtOutputs`.
+   (logRef/failurePhase/exitCode/logTail) is appended after `builtOutputs`,
+   followed by the deferred dedup/fleet set (deduplicated/builderId, gate H3).
    This is the production characterisation of the layout modelled in
    `serve-diag-core.cc`; the version is NOT yet frozen (decisions Blocker 3). */
 VERSIONED_CHARACTERIZATION_TEST(
@@ -364,6 +365,8 @@ VERSIONED_CHARACTERIZATION_TEST(
                 .timesBuilt = 1,
                 .startTime = 30,
                 .stopTime = 50,
+                .deduplicated = true,
+                .builderId = "builder-7",
             },
         };
         t;

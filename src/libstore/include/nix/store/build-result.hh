@@ -231,6 +231,33 @@ struct BuildResult
      */
     std::string logTail;
 
+    /**
+     * Dedup/fleet-observability set (RFC §4.3, G3; the **deferred** serve set,
+     * gate H3). These are *defined* by the Phase 3 Build Registry / coordinator
+     * design (`build/build-registry.hh`) and so come **after** the frozen
+     * diagnostic-core layout above (`logRef`/`failurePhase`/`exitCode`/`logTail`),
+     * carried only on the *unstable* serve 2.9 wire (`serve-build-logs`) and the
+     * worker protocol's `build-log-query` feature. They are **not frozen** and do
+     * **not** bump `SERVE_PROTOCOL_VERSION` (decisions Blocker 3, guardrail
+     * §8.1 #7).
+     */
+
+    /**
+     * Whether this result was produced by a build the requesting session
+     * *attached to* rather than started — i.e. it was coalesced onto an existing
+     * build of the same resolved derivation (a Build Registry HIT). Stamped
+     * per-subscriber by the registry. `false` for a build this session started
+     * and for backends without a registry.
+     */
+    bool deduplicated = false;
+
+    /**
+     * An opaque identifier of the builder that actually produced this result
+     * (which node/pod in an elastic fleet, §4.3.4). Empty when unknown / not
+     * applicable (e.g. a local single-process backend). Purely informational.
+     */
+    std::string builderId;
+
     bool operator==(const BuildResult &) const noexcept;
     std::strong_ordering operator<=>(const BuildResult &) const noexcept;
 };

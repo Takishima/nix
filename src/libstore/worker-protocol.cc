@@ -288,6 +288,11 @@ BuildResult WorkerProto::Serialise<BuildResult>::read(const StoreDirConfig & sto
         uint64_t exitCode = 0;
         conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
         res.exitCode = (int64_t) exitCode;
+        // Deferred dedup/fleet set (RFC §4.3, gate H3), appended *after* the
+        // frozen diagnostic-core layout. Semantics defined by the Phase 3 Build
+        // Registry; still behind the unstable feature. Order (builderId,
+        // deduplicated) mirrors serve-diag-core.cc. See Blocker 3.
+        conn.from >> res.builderId >> res.deduplicated;
     }
 
     res.inner = std::visit(
@@ -350,6 +355,9 @@ void WorkerProto::Serialise<BuildResult>::write(
         // gated on the `build-log-query` feature. See decisions Blocker 3.
         if (conn.version.features.contains(WorkerProto::featureBuildLogQuery)) {
             conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
+            // Deferred dedup/fleet set (gate H3), after the frozen core
+            // (builderId, deduplicated — see serve-diag-core.cc).
+            conn.to << res.builderId << res.deduplicated;
         }
     };
 

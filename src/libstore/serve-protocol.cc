@@ -51,6 +51,12 @@ BuildResult ServeProto::Serialise<BuildResult>::read(const StoreDirConfig & stor
         uint64_t exitCode = 0;
         conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
         res.exitCode = (int64_t) exitCode;
+        // Deferred dedup/fleet set (RFC §4.3, gate H3), appended *after* the
+        // frozen diagnostic-core layout. Still unstable (no 2.9 bump); their
+        // semantics are defined by the Phase 3 Build Registry. Order
+        // (builderId, deduplicated) mirrors the candidate-layout guard in
+        // `serve-diag-core.cc`. See Blocker 3.
+        conn.from >> res.builderId >> res.deduplicated;
     }
 
     res.inner = std::visit(
@@ -109,6 +115,9 @@ void ServeProto::Serialise<BuildResult>::write(
         // gated on the unstable serve 2.9 wire. See decisions Blocker 3.
         if (conn.version >= ServeProto::Version{2, 9}) {
             conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
+            // Deferred dedup/fleet set (gate H3), after the frozen core
+            // (builderId, deduplicated — see serve-diag-core.cc).
+            conn.to << res.builderId << res.deduplicated;
         }
     };
 

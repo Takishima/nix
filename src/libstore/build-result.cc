@@ -178,6 +178,14 @@ void adl_serializer<BuildResult>::to_json(json & res, const BuildResult & br)
         res["logTail"] = br.logTail;
     }
 
+    // Deferred dedup/fleet set (RFC §4.3, gate H3) — after the diagnostic core.
+    if (br.deduplicated) {
+        res["deduplicated"] = br.deduplicated;
+    }
+    if (!br.builderId.empty()) {
+        res["builderId"] = br.builderId;
+    }
+
     // Handle success or failure variant
     std::visit(
         overloaded{
@@ -226,6 +234,14 @@ BuildResult adl_serializer<BuildResult>::from_json(const json & _json)
     }
     if (auto logTail = optionalValueAt(json, "logTail")) {
         br.logTail = getString(*logTail);
+    }
+
+    // Deferred dedup/fleet set (RFC §4.3, gate H3).
+    if (auto deduplicated = optionalValueAt(json, "deduplicated")) {
+        br.deduplicated = getBoolean(*deduplicated);
+    }
+    if (auto builderId = optionalValueAt(json, "builderId")) {
+        br.builderId = getString(*builderId);
     }
 
     // Determine success or failure based on success field

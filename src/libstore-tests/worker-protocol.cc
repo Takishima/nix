@@ -534,7 +534,9 @@ VERSIONED_CHARACTERIZATION_TEST(
 
 /* Worker protocol with the `build-log-query` feature: the structured
    diagnostic core (logRef/failurePhase/exitCode/logTail) is appended after
-   `builtOutputs`. Unstable / not frozen (decisions Blocker 3). */
+   `builtOutputs`, followed by the deferred dedup/fleet set
+   (deduplicated/builderId, gate H3). Unstable / not frozen (decisions
+   Blocker 3). */
 VERSIONED_CHARACTERIZATION_TEST(
     WorkerProtoTest,
     buildResult_build_log_query,
@@ -588,6 +590,8 @@ VERSIONED_CHARACTERIZATION_TEST(
                 .stopTime = 50,
                 .cpuUser = std::chrono::microseconds(500s),
                 .cpuSystem = std::chrono::microseconds(604s),
+                .deduplicated = true,
+                .builderId = "builder-7",
             },
         };
         t;
