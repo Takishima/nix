@@ -2,9 +2,64 @@
 #include "nix/store/serve-protocol-impl.hh"
 #include "nix/store/build-result.hh"
 #include "nix/store/derivations.hh"
+#include "nix/store/worker-protocol.hh" // for the STDERR_* log-tunnel framing
 #include "nix/util/experimental-features.hh"
+#include "nix/util/logging.hh"
+#include "nix/util/util.hh" // chomp
 
 namespace nix {
+
+/* Read serve log-tunnel fields; mirrors `writeServeLogFields` on the server
+   (nix-store.cc) and the worker protocol's `readFields`. */
+static Logger::Fields readServeLogFields(Source & from)
+{
+    Logger::Fields fields;
+    size_t size = readInt(from);
+    for (size_t n = 0; n < size; n++) {
+        auto type = (decltype(Logger::Field::type)) readInt(from);
+        if (type == Logger::Field::tInt)
+            fields.push_back(readNum<uint64_t>(from));
+        else if (type == Logger::Field::tString)
+            fields.push_back(readString(from));
+        else
+            throw Error("got unsupported field type %x in serve log stream", (int) type);
+    }
+    return fields;
+}
+
+void ServeProto::BasicClientConnection::processStderr()
+{
+    /* Replay the server's STDERR_* log-frame stream into the ambient logger
+       until STDERR_LAST, after which the build result follows (RFC Phase 2,
+       G1 / Gap B). The result/error encoding is unchanged; this only drains
+       the log frames the server now prepends on the unstable serve surface. */
+    while (true) {
+        auto msg = readNum<uint64_t>(from);
+        if (msg == STDERR_NEXT) {
+            printError(chomp(readString(from)));
+        } else if (msg == STDERR_START_ACTIVITY) {
+            auto act = readNum<ActivityId>(from);
+            auto lvl = (Verbosity) readInt(from);
+            auto type = (ActivityType) readInt(from);
+            auto s = readString(from);
+            auto fields = readServeLogFields(from);
+            auto parent = readNum<ActivityId>(from);
+            logger->startActivity(act, lvl, type, s, fields, parent);
+        } else if (msg == STDERR_STOP_ACTIVITY) {
+            auto act = readNum<ActivityId>(from);
+            logger->stopActivity(act);
+        } else if (msg == STDERR_RESULT) {
+            auto act = readNum<ActivityId>(from);
+            auto type = (ResultType) readInt(from);
+            auto fields = readServeLogFields(from);
+            logger->result(act, type, fields);
+        } else if (msg == STDERR_LAST) {
+            break;
+        } else {
+            throw Error("got unknown message type %x from remote serve builder", msg);
+        }
+    }
+}
 
 ServeProto::Version ServeProto::offeredVersion()
 {
@@ -92,6 +147,9 @@ void ServeProto::BasicClientConnection::putBuildDerivationRequest(
 
 BuildResult ServeProto::BasicClientConnection::getBuildDerivationResponse(const StoreDirConfig & store)
 {
+    // Drain the live log stream (serve >= 2.9) before the result.
+    if (ServeProto::supportsDiagnostics(remoteVersion))
+        processStderr();
     return ServeProto::Serialise<BuildResult>::read(store, *this);
 }
 

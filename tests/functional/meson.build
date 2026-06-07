@@ -143,6 +143,7 @@ suites = [
       'ssh-ng-build-log.sh',
       'serve-build-log.sh',
       'build-remote-fail-loud.sh',
+      'build-remote-serve-log-stream.sh',
       'post-hook.sh',
       'function-trace.sh',
       'formatter.sh',

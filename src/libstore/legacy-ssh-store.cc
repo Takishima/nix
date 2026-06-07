@@ -248,6 +248,10 @@ void LegacySSHStore::buildPaths(
 
     conn->to.flush();
 
+    // Drain the live build-log stream (serve >= 2.9) before the result.
+    if (ServeProto::supportsDiagnostics(conn->remoteVersion))
+        conn->processStderr();
+
     auto status = CommonProto::Serialise<BuildResultStatus>::read(*this, {conn->from});
     if (auto * failure = std::get_if<BuildResultFailureStatus>(&status)) {
         std::string errorMsg;
