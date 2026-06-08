@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-# RFC `remote-build-protocol-redesign` Phase 4 (G4): logs behave identically
+# Logs behave identically
 # when the build store differs from the eval store. Logs are keyed on the
-# derivation, so live streaming and `nix log` (fetch, Gap A) carry through the
+# derivation, so live streaming and `nix log` (fetch) carry through the
 # split with no special wiring.
 #
 # This exercises the `ssh-ng://` build store with a separate local `--eval-store`
@@ -10,9 +10,9 @@
 # the derivation was evaluated), using fake-SSH to localhost (no sshd).
 #
 # Note: building on an `ssh://` (legacy serve) store with a separate eval store
-# is a separate, deferred item (RFC §4.6's `realiseRemote(...)`): the serve
+# is a separate, deferred item (`realiseRemote(...)`): the serve
 # build model can't realise a copied drv closure on its own. `ssh-ng://` is the
-# split transport that works today, which is what G4's log parity rides on.
+# split transport that works today, which is what this log parity rides on.
 
 source common.sh
 
@@ -35,7 +35,7 @@ outPath=$(nix build -f dependencies.nix --no-link --print-out-paths \
 # build store only for building).
 ls "$eval_store"/nix/store/*-dependencies-top.drv >/dev/null
 
-# `nix log` over the split fetches the log from the *build* store (Gap A),
+# `nix log` over the split fetches the log from the *build* store,
 # keyed on the derivation, regardless of the eval store — identical to the
 # non-split case.
 [ "$(nix log --store ssh-ng://localhost --eval-store "$eval_store" "$outPath")" = FOO ]

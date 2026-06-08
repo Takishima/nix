@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# RFC `remote-build-protocol-redesign` Phase 3 (G3): the build coordinator
+# The build coordinator
 # coalesces two concurrent builds of the *same resolved derivation* into one
 # build, fans its log out to both clients, and replays the buffered log to the
 # late joiner.

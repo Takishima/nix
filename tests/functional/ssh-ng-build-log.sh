@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-# Regression test for "Gap A" (RFC `remote-build-protocol-redesign`, Phase 0):
-# `nix log` must work over `ssh-ng://`. Before this, `SSHStore::getBuildLogExact`
+# Regression test: `nix log` must work over `ssh-ng://`. Before this, `SSHStore::getBuildLogExact`
 # threw `unsupported`; it is now implemented in `RemoteStore` via the
 # `QueryBuildLog` worker-protocol op, so a `ssh-ng://` client can fetch a build
 # log that the remote daemon persisted.
@@ -24,6 +23,6 @@ outPath=$(nix-build dependencies.nix --no-out-link)
 # above; the point is that the *client* is a plain `RemoteStore` (not a
 # `LocalFSStore`) and must go through the new `QueryBuildLog` worker op.
 #
-# Before Gap A was fixed this failed with
+# Before this was fixed it failed with
 #   "operation 'getBuildLogExact' is not supported by store 'ssh-ng://localhost'".
 [ "$(nix log --store ssh-ng://localhost "$outPath")" = FOO ]

@@ -43,13 +43,13 @@ BuildResult ServeProto::Serialise<BuildResult>::read(const StoreDirConfig & stor
         }
     }
 
-    // Structured diagnostic core (RFC §4.4), appended after `builtOutputs`,
-    // gated on the unstable serve 2.9 wire. See decisions Blocker 3.
+    // Structured diagnostic core, appended after `builtOutputs`,
+    // gated on the unstable serve 2.9 wire.
     if (conn.version >= ServeProto::Version{2, 9}) {
         uint64_t exitCode = 0;
         conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
         res.exitCode = (int64_t) exitCode;
-        // Deferred dedup/fleet set (gate H3), after the frozen core
+        // Deferred dedup/fleet set, after the frozen core
         // (builderId, deduplicated — see serve-diag-core.cc).
         conn.from >> res.builderId >> res.deduplicated;
     }
@@ -106,11 +106,11 @@ void ServeProto::Serialise<BuildResult>::write(
             ServeProto::write(store, conn, sm);
         }
 
-        // Structured diagnostic core (RFC §4.4), appended after `builtOutputs`,
-        // gated on the unstable serve 2.9 wire. See decisions Blocker 3.
+        // Structured diagnostic core, appended after `builtOutputs`,
+        // gated on the unstable serve 2.9 wire.
         if (conn.version >= ServeProto::Version{2, 9}) {
             conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
-            // Deferred dedup/fleet set (gate H3), after the frozen core
+            // Deferred dedup/fleet set, after the frozen core
             // (builderId, deduplicated — see serve-diag-core.cc).
             conn.to << res.builderId << res.deduplicated;
         }

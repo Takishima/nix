@@ -302,11 +302,10 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
         .tag = Xp::BuildCoordinator,
         .name = "build-coordinator",
         .description = R"(
-            Enables the stock `nix-daemon` build **coordinator** (RFC
-            `remote-build-protocol-redesign` Phase 3): a separate, lazily-spawned
-            per-store process that coalesces concurrent builds of the same
-            resolved derivation into one build, fans its log out to every
-            attached client, and replays the buffered log to late joiners.
+            Enables the stock `nix-daemon` build **coordinator**: a separate,
+            lazily-spawned per-store process that coalesces concurrent builds of
+            the same resolved derivation into one build, fans its log out to
+            every attached client, and replays the buffered log to late joiners.
 
             When enabled, the daemon's `BuildDerivation` handler relays to the
             coordinator (at `$NIX_STATE_DIR/coordinator.socket`, overridable with

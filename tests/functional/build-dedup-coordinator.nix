@@ -34,7 +34,7 @@ in
   # token unique to *this build process* (the builder shell's PID — distinct for
   # every real build invocation), then (3) stays in-flight for `seconds` so a
   # second, concurrent request for the *same* resolved derivation can attach to
-  # it (RFC remote-build-protocol-redesign Phase 3, G3). The build runs in an
+  # it. The build runs in an
   # isolated mount namespace, so it communicates *only* through its streamed log
   # — which is exactly the fan-out/replay path under test. The test proves dedup
   # by asserting both clients observe the *same* token (one shared build), the

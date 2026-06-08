@@ -535,8 +535,7 @@ VERSIONED_CHARACTERIZATION_TEST(
 /* Worker protocol with the `build-log-query` feature: the structured
    diagnostic core (logRef/failurePhase/exitCode/logTail) is appended after
    `builtOutputs`, followed by the deferred dedup/fleet set
-   (deduplicated/builderId, gate H3). Unstable / not frozen (decisions
-   Blocker 3). */
+   (deduplicated/builderId). Unstable / not frozen. */
 VERSIONED_CHARACTERIZATION_TEST(
     WorkerProtoTest,
     buildResult_build_log_query,
@@ -597,7 +596,7 @@ VERSIONED_CHARACTERIZATION_TEST(
         t;
     }))
 
-/* Freeze criterion 3 (decisions Blocker 3), worker side: a peer WITHOUT the
+/* Back-compat, worker side: a peer WITHOUT the
    `build-log-query` feature reads a BuildResult written WITH it, decodes the
    base fields, and leaves the appended diagnostic-core tail unconsumed — the
    diagnostic core is purely additive and feature-gated. */

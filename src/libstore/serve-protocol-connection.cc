@@ -30,8 +30,8 @@ static Logger::Fields readServeLogFields(Source & from)
 void ServeProto::BasicClientConnection::processStderr()
 {
     /* Replay the server's STDERR_* log-frame stream into the ambient logger
-       until STDERR_LAST, after which the build result follows (RFC Phase 2,
-       G1 / Gap B). The result/error encoding is unchanged; this only drains
+       until STDERR_LAST, after which the build result follows. The result/error
+       encoding is unchanged; this only drains
        the log frames the server now prepends on the unstable serve surface. */
     while (true) {
         auto msg = readNum<uint64_t>(from);

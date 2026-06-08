@@ -654,10 +654,10 @@ static void performOp(
         }
 
         auto res = [&]() -> BuildResult {
-            /* RFC Phase 3: with the `build-coordinator` feature, relay this
-               build to the per-store coordinator for cross-client dedup /
-               attach / log fan-out instead of building in-process (additive
-               and feature-gated — see build-coordinator.hh for expand/contract).
+            /* With the `build-coordinator` feature, relay this build to the
+               per-store coordinator for cross-client dedup / attach / log
+               fan-out instead of building in-process (additive and
+               feature-gated — see build-coordinator.hh for expand/contract).
                The relay re-emits the shared build's frames through `logger`
                (the TunnelLogger here), so the client wire is unchanged. */
             if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator))

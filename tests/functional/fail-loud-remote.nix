@@ -28,7 +28,7 @@ in
 {
   # A derivation that writes identifiable lines to its build log and then
   # fails. Used to check that a *remote* build failure surfaces the remote
-  # log tail (RFC `remote-build-protocol-redesign`, Gap C / G8). Uses busybox
+  # log tail. Uses busybox
   # (statically linked, self-contained) so it builds on an isolated remote.
   failingWithLog = mkDerivation {
     name = "fail-loud-remote";

@@ -78,7 +78,7 @@ struct ServeProto
      * detail to follow). Its byte layout is **not** a back-compat promise: it is
      * only offered when the `serve-build-logs` experimental feature is enabled,
      * and `SERVE_PROTOCOL_VERSION` (i.e. `latest`) deliberately stays at 2.8
-     * until the freeze criteria of decisions "Blocker 3" are met.
+     * until the layout is frozen.
      */
     static constexpr Version unstableDiagnostics = {
         .major = 2,
@@ -185,8 +185,8 @@ enum struct ServeProto::Command : uint64_t {
     /**
      * Fetch a build log by derivation path. Provisional: only available at the
      * unstable serve version 2.9 (see `ServeProto::unstableDiagnostics`), gated
-     * by the `serve-build-logs` experimental feature. Used to close "Gap A"
-     * (`nix log` over `ssh://`) without out-of-band log capture.
+     * by the `serve-build-logs` experimental feature. Lets `nix log` work over
+     * `ssh://` without out-of-band log capture.
      */
     QueryBuildLog = 10,
 };

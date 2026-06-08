@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 
-# RFC `remote-build-protocol-redesign` Phase 3 (G3) — refcounted cancellation
-# (decisions Blocker 2, guardrail §8.1 #3). A shared build lives by refcount: a
+# Refcounted cancellation. A shared build lives by refcount: a
 # subscriber detaching must NOT cancel a build other subscribers still want, and
 # there is no originator privilege (the first subscriber is just subscriber #1).
 #
-# This exercises the headline case C-a from the cancel matrix: two clients attach
+# This exercises the headline case: two clients attach
 # to one coordinated build (same resolved derivation, via the build hook to an
 # ssh-ng:// builder whose daemon relays to the coordinator); the ORIGINATOR is
 # then killed while the joiner remains attached. The build must continue and the
@@ -81,4 +80,4 @@ wait "$pidB"; rB=$?
 #    fresh build of its own).
 grepQuiet 'BUILDTOKEN:' "$outB"
 
-echo "refcounted-cancel C-a OK: originator killed, joiner completed (build continued)" >&2
+echo "refcounted-cancel OK: originator killed, joiner completed (build continued)" >&2

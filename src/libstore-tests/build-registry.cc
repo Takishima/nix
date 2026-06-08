@@ -71,7 +71,7 @@ struct TrustedOnlyPolicy : BuildAuthPolicy
 } // namespace
 
 /* ------------------------------------------------------------------------ *
- * Dedup / coalescing (RFC §4.3, guardrail §8.1 #1)
+ * Dedup / coalescing
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, dedupCoalescesSameKey)
@@ -98,7 +98,7 @@ TEST(BuildRegistry, dedupCoalescesSameKey)
 
 TEST(BuildRegistry, distinctKeysDoNotCoalesce)
 {
-    // Architecture-safety (guardrail §8.1 #1): different resolved drvs (e.g.
+    // Architecture-safety: different resolved drvs (e.g.
     // x86 vs aarch64) are distinct keys and never coalesce.
     AllowAllAuthPolicy policy;
     auto reg = makeInMemoryBuildRegistry(policy);
@@ -118,7 +118,7 @@ TEST(BuildRegistry, distinctKeysDoNotCoalesce)
 }
 
 /* ------------------------------------------------------------------------ *
- * Log fan-out (broadcaster, §4.3)
+ * Log fan-out (broadcaster)
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, logFansOutToAllSubscribers)
@@ -139,7 +139,7 @@ TEST(BuildRegistry, logFansOutToAllSubscribers)
 }
 
 /* ------------------------------------------------------------------------ *
- * Late-join replay (§4.3.1)
+ * Late-join replay
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, lateJoinerReplaysThenFollowsLiveTail)
@@ -189,7 +189,7 @@ TEST(BuildRegistry, replayCanBeDeclined)
 
 TEST(BuildRegistry, replayBufferTruncatesWithMarker)
 {
-    // O5: head+tail cap with an explicit truncation marker once the tail evicts.
+    // head+tail cap with an explicit truncation marker once the tail evicts.
     AllowAllAuthPolicy policy;
     auto reg = makeInMemoryBuildRegistry(policy, ReplayBufferCaps{.headCap = 8, .tailCap = 8});
     BuildAuth auth{.identity = "u", .trusted = true};
@@ -213,7 +213,7 @@ TEST(BuildRegistry, replayBufferTruncatesWithMarker)
 }
 
 /* ------------------------------------------------------------------------ *
- * Result delivery + deduplicated stamping (gate H3)
+ * Result delivery + deduplicated stamping
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, finishDeliversToAllWithPerSubscriberDeduplicated)
@@ -263,7 +263,7 @@ TEST(BuildRegistry, finishIsIdempotentAfterCancel)
 }
 
 /* ------------------------------------------------------------------------ *
- * Refcounted cancellation matrix (Blocker 2)
+ * Refcounted cancellation matrix
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, cancel_C_a_continuesWhenAnotherSubscriberRemains)
@@ -371,7 +371,7 @@ TEST(BuildRegistry, cancel_C_f_activeCancelScopedToCancellerWhenOthersRemain)
 }
 
 /* ------------------------------------------------------------------------ *
- * Per-subscriber timeouts under the max envelope (Blocker 2, C-d)
+ * Per-subscriber timeouts under the max envelope
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, timeout_C_d_perSubscriberDetachUnderMaxEnvelope)
@@ -426,7 +426,7 @@ TEST(BuildRegistry, deadlineEnvelopeUnboundedIfAnySubscriberHasNoDeadline)
 }
 
 /* ------------------------------------------------------------------------ *
- * keep-failed OR (Blocker 2, C-e)
+ * keep-failed OR
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, keepFailedIsLogicalOr)
@@ -444,7 +444,7 @@ TEST(BuildRegistry, keepFailedIsLogicalOr)
 }
 
 /* ------------------------------------------------------------------------ *
- * Authorization before registry (Blocker 1, no existence oracle)
+ * Authorization before registry (no existence oracle)
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, authorizeBeforeRegistryUniformDenial)
@@ -475,7 +475,7 @@ TEST(BuildRegistry, authorizeBeforeRegistryUniformDenial)
 }
 
 /* ------------------------------------------------------------------------ *
- * Introspection (G5, §4.3.2)
+ * Introspection
  * ------------------------------------------------------------------------ */
 
 TEST(BuildRegistry, queryActiveReportsLiveBuilds)

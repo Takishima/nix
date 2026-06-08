@@ -85,8 +85,7 @@ struct ServeProto::BasicClientConnection
      * Replay a serve log-frame stream (`STDERR_*`) into the ambient `logger`
      * until `STDERR_LAST`, after which the build result follows. Used before
      * reading a build result when the negotiated version supports live log
-     * streaming (serve >= 2.9 / `serve-build-logs`). See RFC
-     * `remote-build-protocol-redesign` Phase 2 (G1 / Gap B).
+     * streaming (serve >= 2.9 / `serve-build-logs`).
      */
     void processStderr();
 

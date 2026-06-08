@@ -53,14 +53,14 @@ static bool allSupportedLocally(Store & store, const StringSet & requiredFeature
 }
 
 /**
- * Best-effort "fail loud" (Gap C / G8) for a remote build failure: return the
- * tail of the remote build log plus a `nix log` hint to append to the failure
- * message. The tail comes from the structured `BuildResult::logTail` when the
- * builder sent it (serve 2.9 / worker `build-log-query`, gated — no extra
- * round-trip), otherwise it is fetched back from the remote store (now possible
- * over `ssh-ng://`, and over `ssh://` with the `serve-build-logs` feature — Gap
- * A). Returns "" if no log is available, and never throws — surfacing the log
- * must not mask the build failure itself.
+ * Best-effort "fail loud" for a remote build failure: return the tail of the
+ * remote build log plus a `nix log` hint to append to the failure message. The
+ * tail comes from the structured `BuildResult::logTail` when the builder sent
+ * it (serve 2.9 / worker `build-log-query`, gated — no extra round-trip),
+ * otherwise it is fetched back from the remote store (now possible over
+ * `ssh-ng://`, and over `ssh://` with the `serve-build-logs` feature). Returns
+ * "" if no log is available, and never throws — surfacing the log must not mask
+ * the build failure itself.
  */
 static std::string renderRemoteBuildLogTail(
     Store & remoteStore,
@@ -395,8 +395,8 @@ static int main_build_remote(int argc, char ** argv)
                             ? " You can re-run the command with `--builders ''` to disable remote building for this invocation."
                             : "");
                 }
-                // Fail loud (Gap C / G8): a remote build failure used to be terse.
-                // `nix log` now works over the remote store (Gap A), so surface the
+                // Fail loud: a remote build failure used to be terse. `nix log`
+                // now works over the remote store, so surface the
                 // tail of the remote build log inline and point at the full log,
                 // mirroring how local build failures are rendered.
                 throw Error(

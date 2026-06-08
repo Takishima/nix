@@ -26,8 +26,8 @@
 namespace nix {
 
 /* ------------------------------------------------------------------------ *
- * Control protocol (child ↔ coordinator) — internal, never the client wire
- * (spike §3.2). Length-prefixed records; first byte is a tag.
+ * Control protocol (child ↔ coordinator) — internal, never the client wire.
+ * Length-prefixed records; first byte is a tag.
  * ------------------------------------------------------------------------ */
 
 namespace {
@@ -183,7 +183,7 @@ std::string coordinatorStoreUri(Store & store)
 }
 
 /** The coordinator control socket for `store`: the `NIX_BUILD_COORDINATOR_SOCKET`
- *  override if set, else `$stateDir/coordinator.socket` (O1 — one per store). */
+ *  override if set, else `$stateDir/coordinator.socket` (one per store). */
 std::string coordinatorSocketPath(Store & store)
 {
     if (auto env = getEnv("NIX_BUILD_COORDINATOR_SOCKET"); env && !env->empty())
@@ -194,9 +194,8 @@ std::string coordinatorSocketPath(Store & store)
     return (settings.nixStateDir / "coordinator.socket").string();
 }
 
-/** Verify the connecting peer is the same uid as us (spike §3.7.1 — the
- *  pluggable-auth seam; peer-cred here, mTLS/identity in a network control
- *  plane). */
+/** Verify the connecting peer is the same uid as us — the pluggable-auth
+ *  seam; peer-cred here, mTLS/identity in a network control plane. */
 bool peerIsSameUid(int fd)
 {
 #ifdef SO_PEERCRED
@@ -249,14 +248,14 @@ struct Coordinator
 
     /** Fork a build child that runs the resolved derivation and frames its log
      *  + result back over a pipe. Builders stay forked, so a builder crash is
-     *  contained exactly as today (spike §2.2). */
+     *  contained exactly as today. */
     void startBuild(const BuildRegistryKey & key, const StorePath & drvPath, const BasicDerivation & drv, BuildMode buildMode)
     {
         Pipe pipe;
         pipe.create();
 
         ProcessOptions opts;
-        opts.dieWithParent = true; // O2: builders die with the coordinator
+        opts.dieWithParent = true; // builders die with the coordinator
         pid_t pid = startProcess(
             [&]() {
                 pipe.readSide.close();
@@ -306,11 +305,11 @@ struct Coordinator
 
         // The key is the resolved-drv path the child sent. For untrusted clients
         // the daemon already recomputed it from the drv (daemon.cc, the CA
-        // `writeDerivation` path) before relaying, and the peer-cred check (§3.7.1)
+        // `writeDerivation` path) before relaying, and the peer-cred check
         // limits connections to same-uid daemon children — so under the current
         // single-user experimental gate this is the daemon-validated key.
-        // DEFERRED for the cross-user coordinator (O1): the coordinator should
-        // itself recompute the key from the received drv (Blocker 1, T3) and
+        // DEFERRED for the cross-user coordinator: the coordinator should
+        // itself recompute the key from the received drv and
         // re-authorize every subscriber against the resolved key via a real
         // BuildAuthPolicy (replacing AllowAll), so a HIT cannot let one tenant
         // attach to another's build.
@@ -412,7 +411,7 @@ struct Coordinator
             }
         } else {
             // Any readability after subscribing means the child closed = client
-            // disconnect → refcounted unsubscribe (Blocker 2 / guardrail §8.1 #3).
+            // disconnect → refcounted unsubscribe.
             char b;
             ssize_t r = ::read(connFd, &b, 1);
             if (r <= 0)
@@ -461,7 +460,7 @@ struct Coordinator
 
             if (n == 0) { // idle tick
                 if (conns.empty() && running.empty() && ++idleTicks >= 2)
-                    break; // idle-exit (O3); the next build lazily respawns
+                    break; // idle-exit; the next build lazily respawns
                 continue;
             }
             idleTicks = 0;
@@ -514,7 +513,7 @@ struct Coordinator
     }
 };
 
-/** Win the right to be *the* coordinator for this socket (spike §3.1 election):
+/** Win the right to be *the* coordinator for this socket (the election):
  *  an exclusive lock on `${socketPath}.lock`. Losers exit; their relay connects
  *  to the winner. */
 AutoCloseFD electCoordinator(const std::string & socketPath)
@@ -572,7 +571,7 @@ BuildResult relayBuildToCoordinator(
     if (!fd)
         throw Error("could not reach the build coordinator at '%s'", socketPath);
 
-    // START_OR_ATTACH (keyed on the resolved drv — a BasicDerivation, §8.1 #1).
+    // START_OR_ATTACH (keyed on the resolved drv — a BasicDerivation).
     {
         StringSink p;
         p << store.printStorePath(drvPath);

@@ -94,7 +94,7 @@ INSTANTIATE_TEST_SUITE_P(
             },
         },
         std::pair{
-            // Deferred dedup/fleet set (RFC §4.3, gate H3).
+            // Deferred dedup/fleet set.
             "deduplicated",
             BuildResult{
                 .inner{BuildResult::Success{

@@ -194,15 +194,13 @@ struct BuildResult
     std::optional<std::chrono::microseconds> cpuUser, cpuSystem;
 
     /**
-     * Structured build diagnostics (RFC `remote-build-protocol-redesign`
-     * §4.4, G2/Gap C) — the "diagnostic core" that lets a remote build
-     * result be as informative as a local one.
+     * Structured build diagnostics — the "diagnostic core" that lets a remote
+     * build result be as informative as a local one.
      *
      * These are carried only on the *unstable* serve 2.9 wire (gated by the
      * `serve-build-logs` experimental feature) and the worker protocol's
      * `build-log-query` feature. They are **not frozen**: the layout may
-     * still change until `SERVE_PROTOCOL_VERSION` is bumped to 2.9 (see
-     * `remote-build-protocol-redesign.decisions.md`, Blocker 3). An empty
+     * still change until `SERVE_PROTOCOL_VERSION` is bumped to 2.9. An empty
      * string / zero means "absent", matching the existing `errorMsg`
      * sentinel idiom in the `BuildResult` serializers.
      */
@@ -232,9 +230,9 @@ struct BuildResult
     std::string logTail;
 
     /**
-     * Dedup/fleet-observability set (RFC §4.3, G3; deferred, gate H3), defined
-     * by the Phase 3 Build Registry (`build/build-registry.hh`). Serialized
-     * after the diagnostic-core fields above, under the same unstable gate.
+     * Dedup/fleet-observability set (deferred), defined by the Build Registry
+     * (`build/build-registry.hh`). Serialized after the diagnostic-core fields
+     * above, under the same unstable gate.
      */
 
     /**
@@ -248,7 +246,7 @@ struct BuildResult
 
     /**
      * An opaque identifier of the builder that actually produced this result
-     * (which node/pod in an elastic fleet, §4.3.4). Empty when unknown / not
+     * (which node/pod in an elastic fleet). Empty when unknown / not
      * applicable (e.g. a local single-process backend). Purely informational.
      */
     std::string builderId;

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-# Regression test for "Gap A" (RFC `remote-build-protocol-redesign`, Phase 0)
-# over the legacy `nix-store --serve` protocol (`ssh://`, used by
+# Regression test for `nix log` over the legacy `nix-store --serve` protocol (`ssh://`, used by
 # `hydra-queue-runner`): `nix log` must work without out-of-band log capture.
 #
 # Exercises the new serve `QueryBuildLog` command, reachable only at the

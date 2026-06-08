@@ -28,8 +28,7 @@ in
 {
   # A derivation that prints an identifiable line to its build log and then
   # succeeds. Used to check that a build offloaded to an ssh:// (serve) builder
-  # streams its log live, upstream (RFC remote-build-protocol-redesign Phase 2,
-  # G1 / Gap B).
+  # streams its log live, upstream.
   withLog = mkDerivation {
     name = "serve-log-stream";
     buildCommand = ''

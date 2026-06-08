@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# RFC `remote-build-protocol-redesign` Phase 3 (G3): the coordinator dedups
+# The coordinator dedups
 # *top-level* builds, not only hook-offloaded `BuildDerivation`s. Here two
 # concurrent `nix build --store ssh-ng://localhost` of the same derivation send
 # `BuildPathsWithResults` to the builder daemon, whose `Worker` runs the build

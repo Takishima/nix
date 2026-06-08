@@ -436,16 +436,16 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
         return LocalBuildCapability{*localStoreP, ext};
     }();
 
-    /* RFC `remote-build-protocol-redesign` Phase 3 (G3): when the build
-       coordinator is enabled, relay this *resolved-derivation* build to the
-       per-store coordinator for cross-client dedup / attach / log fan-out
-       instead of building it here (the general integration point, covering
-       top-level `ssh-ng://` builds, not only hook-offloaded `BuildDerivation`).
+    /* When the build coordinator is enabled, relay this *resolved-derivation*
+       build to the per-store coordinator for cross-client dedup / attach / log
+       fan-out instead of building it here (the general integration point,
+       covering top-level `ssh-ng://` builds, not only hook-offloaded
+       `BuildDerivation`).
 
        We branch *before* acquiring the output `PathLocks` so the coordinator's
-       build child can take them itself (the cross-process lock floor, spike
-       §1.3) without deadlocking against locks we would otherwise hold on the
-       same store. `NIX_BUILD_COORDINATOR_INNER` (set by the coordinator in its
+       build child can take them itself (the cross-process lock floor) without
+       deadlocking against locks we would otherwise hold on the same store.
+       `NIX_BUILD_COORDINATOR_INNER` (set by the coordinator in its
        build child) is the recursion guard that stops that child relaying back.
        We only intercept builds that would otherwise run *locally* on this store:
        a hook-offloaded build keeps going to the hook, so the coordinator dedups
@@ -1197,8 +1197,8 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
        still live, so they can flush the build's buffered log. */
     buildLog.act->result(resBuildResult, (uint64_t) 1);
 
-    /* Populate the structured diagnostic core (RFC §4.4, G2/Gap C) so this
-       failure is as informative over the wire as it is locally. Carried only
+    /* Populate the structured diagnostic core so this failure is as
+       informative over the wire as it is locally. Carried only
        on the unstable serve 2.9 / worker `build-log-query` wire; harmless
        otherwise. `logRef` is the persist key a client passes to `nix log`. */
     buildResult.logRef = worker.store.printStorePath(drvPath);

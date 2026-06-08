@@ -138,7 +138,7 @@ struct WorkerProto
     /**
      * Feature for `QueryBuildLog`: fetching a build log by derivation path over
      * the worker protocol, so `nix log` works against an `ssh-ng://` store whose
-     * daemon holds the log (closes "Gap A": `getBuildLogExact` over `ssh-ng`).
+     * daemon holds the log (`getBuildLogExact` over `ssh-ng`).
      */
     static constexpr std::string_view featureBuildLogQuery = "build-log-query";
 

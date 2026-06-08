@@ -315,9 +315,9 @@ VERSIONED_CHARACTERIZATION_TEST(
 
 /* Serve 2.9 (unstable, `serve-build-logs`): the structured diagnostic core
    (logRef/failurePhase/exitCode/logTail) is appended after `builtOutputs`,
-   followed by the deferred dedup/fleet set (deduplicated/builderId, gate H3).
+   followed by the deferred dedup/fleet set (deduplicated/builderId).
    This is the production characterisation of the layout modelled in
-   `serve-diag-core.cc`; the version is NOT yet frozen (decisions Blocker 3). */
+   `serve-diag-core.cc`; the version is NOT yet frozen. */
 VERSIONED_CHARACTERIZATION_TEST(
     ServeProtoTest,
     buildResult_2_9,
@@ -372,7 +372,7 @@ VERSIONED_CHARACTERIZATION_TEST(
         t;
     }))
 
-/* Freeze criterion 3 (decisions Blocker 3): a peer at the stable serve 2.8
+/* Back-compat: a peer at the stable serve 2.8
    reads a 2.9-written BuildResult, decodes exactly the base fields, and leaves
    the appended diagnostic-core tail unconsumed — i.e. the 2.9 layout is purely
    additive and no existing field changes meaning. This is the production

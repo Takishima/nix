@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-# Phase 1 of RFC `remote-build-protocol-redesign` (G8 / Gap C): the
-# `print-build-logs = on-failure` mode (`progress-bar.cc`, `main.cc`,
+# The `print-build-logs = on-failure` mode (`progress-bar.cc`, `main.cc`,
 # `globals.hh`). It is the CI-friendly mode: quiet while builds succeed,
 # but when a build fails it dumps that build's *full* captured log — more
 # than the `log-lines` tail that always accompanies a build error.

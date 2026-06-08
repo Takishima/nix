@@ -163,7 +163,7 @@ void adl_serializer<BuildResult>::to_json(json & res, const BuildResult & br)
         res["cpuSystem"] = br.cpuSystem->count();
     }
 
-    // Structured diagnostics (RFC §4.4). Emitted only when present, so a
+    // Structured diagnostics. Emitted only when present, so a
     // result without them serializes exactly as before.
     if (!br.logRef.empty()) {
         res["logRef"] = br.logRef;
@@ -178,7 +178,7 @@ void adl_serializer<BuildResult>::to_json(json & res, const BuildResult & br)
         res["logTail"] = br.logTail;
     }
 
-    // Deferred dedup/fleet set (RFC §4.3, gate H3) — after the diagnostic core.
+    // Deferred dedup/fleet set — after the diagnostic core.
     if (br.deduplicated) {
         res["deduplicated"] = br.deduplicated;
     }
@@ -222,7 +222,7 @@ BuildResult adl_serializer<BuildResult>::from_json(const json & _json)
         br.cpuSystem = std::chrono::microseconds(getUnsigned(*cpuSystem));
     }
 
-    // Structured diagnostics (RFC §4.4).
+    // Structured diagnostics.
     if (auto logRef = optionalValueAt(json, "logRef")) {
         br.logRef = getString(*logRef);
     }
@@ -236,7 +236,7 @@ BuildResult adl_serializer<BuildResult>::from_json(const json & _json)
         br.logTail = getString(*logTail);
     }
 
-    // Deferred dedup/fleet set (RFC §4.3, gate H3).
+    // Deferred dedup/fleet set.
     if (auto deduplicated = optionalValueAt(json, "deduplicated")) {
         br.deduplicated = getBoolean(*deduplicated);
     }

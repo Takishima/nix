@@ -280,13 +280,13 @@ BuildResult WorkerProto::Serialise<BuildResult>::read(const StoreDirConfig & sto
         }
     }
 
-    // Structured diagnostic core (RFC §4.4), appended after `builtOutputs`,
-    // gated on the `build-log-query` feature. See decisions Blocker 3.
+    // Structured diagnostic core, appended after `builtOutputs`,
+    // gated on the `build-log-query` feature.
     if (conn.version.features.contains(WorkerProto::featureBuildLogQuery)) {
         uint64_t exitCode = 0;
         conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
         res.exitCode = (int64_t) exitCode;
-        // Deferred dedup/fleet set (gate H3), after the frozen core
+        // Deferred dedup/fleet set, after the frozen core
         // (builderId, deduplicated — see serve-diag-core.cc).
         conn.from >> res.builderId >> res.deduplicated;
     }
@@ -347,11 +347,11 @@ void WorkerProto::Serialise<BuildResult>::write(
             WorkerProto::write(store, conn, sm);
         }
 
-        // Structured diagnostic core (RFC §4.4), appended after `builtOutputs`,
-        // gated on the `build-log-query` feature. See decisions Blocker 3.
+        // Structured diagnostic core, appended after `builtOutputs`,
+        // gated on the `build-log-query` feature.
         if (conn.version.features.contains(WorkerProto::featureBuildLogQuery)) {
             conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
-            // Deferred dedup/fleet set (gate H3), after the frozen core
+            // Deferred dedup/fleet set, after the frozen core
             // (builderId, deduplicated — see serve-diag-core.cc).
             conn.to << res.builderId << res.deduplicated;
         }

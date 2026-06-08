@@ -12,7 +12,7 @@ namespace nix {
 namespace {
 
 /**
- * The bounded replay buffer (§4.3.1, O5): a ~`headCap` head + ~`tailCap` tail
+ * The bounded replay buffer: a ~`headCap` head + ~`tailCap` tail
  * with an explicit truncation marker once the tail evicts anything. The head
  * preserves configure/early-failure context; the tail preserves the live edge.
  */
@@ -80,7 +80,7 @@ struct Build
     uint64_t epoch = 0;
     time_t startTime = 0;
     /** Sticky: set once any subscriber registers a durable root, keeps the build
-     *  alive past refcount 0 (Blocker 2 `hasRootReasonToContinue`). */
+     *  alive past refcount 0 (`hasRootReasonToContinue`). */
     bool rooted = false;
     uint64_t logBytes = 0;
     ReplayBuffer replay;
@@ -153,7 +153,7 @@ public:
         const SubscribeOptions & opts,
         std::function<void()> onCancel) override
     {
-        // Blocker 1: authorize BEFORE consulting the registry, so a denial does
+        // Authorize BEFORE consulting the registry, so a denial does
         // not branch on whether the build exists (no existence/timing oracle).
         if (!policy.mayBuild(auth, key))
             return std::nullopt;
@@ -189,7 +189,7 @@ public:
         // Replay the buffered log to the late joiner, then it follows the live
         // tail (registered above). Single-threaded: no frame can arrive between
         // the snapshot and the live registration, so there is no gap/dup at the
-        // seam (§3.5).
+        // seam.
         if (deduplicated && opts.replayWanted && liveSink)
             for (auto & frame : build->replay.snapshot())
                 liveSink(frame);
@@ -223,7 +223,7 @@ public:
         for (auto & [id, sub] : build->subscribers) {
             if (sub.resultSink) {
                 BuildResult r = result;
-                r.deduplicated = sub.deduplicated; // per-subscriber stamp (gate H3)
+                r.deduplicated = sub.deduplicated; // per-subscriber stamp
                 sub.resultSink(r);
             }
         }
@@ -263,7 +263,7 @@ public:
         if (!build)
             return;
         build->subscribers.erase(id.value);
-        // Refcounted cancellation (Blocker 2): cancel only when no subscriber
+        // Refcounted cancellation: cancel only when no subscriber
         // remains and no durable root keeps it alive.
         if (build->subscribers.empty() && !build->rooted) {
             auto onCancel = build->onCancel;
@@ -306,7 +306,7 @@ public:
     {
         std::vector<ActiveBuildStatus> out;
         for (auto & [key, build] : builds) {
-            // Per-observable authorization (Blocker 1): only builds this identity
+            // Per-observable authorization: only builds this identity
             // could itself have requested are enumerated.
             if (!policy.mayBuild(auth, key))
                 continue;

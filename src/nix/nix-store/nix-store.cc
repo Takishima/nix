@@ -896,8 +896,8 @@ static void writeServeLogFields(Sink & to, const Logger::Fields & fields)
     }
 }
 
-/* Serve-side stderr log tunnel (RFC `remote-build-protocol-redesign` Phase 2,
-   G1 / closes Gap B): frames a build's log activity as STDERR_* messages onto
+/* Serve-side stderr log tunnel: frames a build's log activity as STDERR_*
+   messages onto
    the serve connection, exactly mirroring the worker protocol's `TunnelLogger`
    (daemon.cc). Used only behind the unstable serve 2.9 / `serve-build-logs`
    gate, so an old peer (e.g. Hydra at 2.8) negotiates down and never sees it.
@@ -1023,8 +1023,8 @@ static void opServe(Strings opFlags, Strings opArgs)
         // FIXME: changing options here doesn't work if we're
         // building through the daemon.
         verbosity = lvlError;
-        // Persist the build log so it can be fetched back via `QueryBuildLog`
-        // (Gap A). Without the diagnostic surface negotiated there is no way to
+        // Persist the build log so it can be fetched back via `QueryBuildLog`.
+        // Without the diagnostic surface negotiated there is no way to
         // retrieve it, so keep the historical suppression to avoid filling the
         // log dir for clients that can never read it.
         settings.getLogFileSettings().keepLog = ServeProto::supportsDiagnostics(clientVersion);
@@ -1125,7 +1125,7 @@ static void opServe(Strings opFlags, Strings opArgs)
 
             getBuildSettings();
 
-            // Live log streaming (RFC Phase 2, G1/Gap B): when the client
+            // Live log streaming: when the client
             // negotiated the unstable diagnostic surface, stream the build's
             // log activity as STDERR_* frames before the result. Old clients
             // (e.g. Hydra at 2.8) take the unchanged path.
@@ -1170,7 +1170,7 @@ static void opServe(Strings opFlags, Strings opArgs)
 
             getBuildSettings();
 
-            // Live log streaming (RFC Phase 2, G1/Gap B); see BuildPaths above.
+            // Live log streaming; see BuildPaths above.
             auto streaming = ServeProto::supportsDiagnostics(clientVersion);
             std::shared_ptr<ServeTunnelLogger> tunnel;
             Logger * prevLogger = logger;
