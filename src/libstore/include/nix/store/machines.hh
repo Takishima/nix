@@ -26,6 +26,16 @@ struct Machine
     bool enabled = true;
 
     /**
+     * Whether this builder schedules its own work (an elastic / autoscaling
+     * backend). When set, the distributed-build hook treats `maxJobs` as a
+     * load-balancing hint rather than a hard cap and never postpones a build for
+     * want of a local slot. Strictly opt-in: without it a builder keeps the
+     * default hard-cap `maxJobs` semantics, so existing machine files are never
+     * silently overcommitted.
+     */
+    bool isElastic = false;
+
+    /**
      * @return Whether `system` is either `"builtin"` or in
      * `systemTypes`.
      */

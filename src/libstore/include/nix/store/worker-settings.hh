@@ -201,6 +201,16 @@ public:
 
              The value for this field can be obtained via `base64 -w0`.
 
+          9. Whether the machine is *self-scheduling* (`true`/`1`) — an elastic
+             or autoscaling backend that does its own scheduling. Defaults to
+             `false`.
+
+             For a self-scheduling machine, field 4 (the maximum number of
+             parallel builds) is treated as a load-balancing *hint* rather than a
+             hard cap, and Nix never postpones a build because the machine's
+             slots are all busy. Leave this off (the default) for fixed-size
+             machines so their parallelism stays capped.
+
           > **Example**
           >
           > Multiple builders specified on the command line:

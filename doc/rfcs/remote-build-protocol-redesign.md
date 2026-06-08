@@ -1410,7 +1410,15 @@ the log fixes.
   such builders; ensure many tagged build/log streams multiplex cleanly
   over one connection; key dedup on the resolved/CA derivation so reuse
   matches the nixbuild.net model; and support session **re-attach** after a
-  dropped connection. Delivers **G6**.
+  dropped connection. Delivers **G6**. *Landed (O7 part b — the config half):*
+  a per-machine `self-scheduled` field (`/etc/nix/machines` column 9) that makes
+  the hook treat `maxJobs` as a load-balancing hint and stop gating on local
+  per-slot locks for that builder — strictly opt-in, default semantics
+  unchanged. The other half of O7 — the **handshake advertisement** so a backend
+  self-selects without per-machine config — is a negotiated wire capability and
+  rides the deferred wire set (it is gated like every new capability, §7); dedup
+  already keys on the resolved drv (Phase 3); tagged-stream multiplexing and
+  session re-attach depend on the Phase 3 coordinator wire and stay deferred.
   *Touches:* `machines.{cc,hh}`, `build-remote.cc`,
   `build/derivation-building-goal.cc`, registry from Phase 3,
   serve/worker protocol version negotiation.

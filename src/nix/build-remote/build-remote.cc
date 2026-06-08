@@ -222,6 +222,20 @@ static int main_build_remote(int argc, char ** argv)
                                 ++load;
                             }
                         }
+                        /* An elastic builder self-schedules, so maxJobs is only a
+                           load-balancing hint: when every hinted slot is busy,
+                           take an overflow slot rather than postponing — the slot
+                           still records load so sibling hook runs balance across
+                           machines. */
+                        if (!free && m.isElastic) {
+                            for (uint64_t slot = m.maxJobs;; ++slot) {
+                                auto slotLock = openSlotLock(m, slot);
+                                if (lockFile(slotLock.get(), ltWrite, false)) {
+                                    free = std::move(slotLock);
+                                    break;
+                                }
+                            }
+                        }
                         if (!free) {
                             continue;
                         }
