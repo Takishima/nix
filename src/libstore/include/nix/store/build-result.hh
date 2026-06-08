@@ -53,6 +53,30 @@ enum struct BuildResultFailureStatus : uint8_t {
 };
 
 /**
+ * How a failure should be classified *for retry*, orthogonal to the exit code.
+ *
+ * The exit code tells you the build process died; it does not tell you whether
+ * dying was the derivation's fault. A compile error and an out-of-memory kill
+ * can both surface as a non-zero exit, but only the first is a property of the
+ * derivation: the second is a property of *where* it ran. That distinction is
+ * what a scheduler needs to decide "retry this elsewhere" vs. "this will fail
+ * again anywhere", and what a durable reuse layer needs so it never caches an
+ * infrastructure failure against the build key.
+ */
+enum struct BuildResultFailureClass : uint8_t {
+    /// The build itself failed (compile error, failing test, hash mismatch).
+    /// The default — an unclassified failure is treated as build-intrinsic, so
+    /// a peer that does not set this field behaves exactly as before.
+    BuildError,
+    /// The builder ran out of a resource (memory, disk) — e.g. an OOM kill.
+    ResourceExhausted,
+    /// The builder node/pod was evicted or reclaimed mid-build.
+    Evicted,
+    /// Any other builder-internal / infrastructural failure (network, etc.).
+    Infra,
+};
+
+/**
  * Denotes a permanent build failure.
  *
  * This is both an exception type (inherits from Error) and serves as
@@ -250,6 +274,34 @@ struct BuildResult
      * applicable (e.g. a local single-process backend). Purely informational.
      */
     std::string builderId;
+
+    using FailureClass = BuildResultFailureClass;
+
+    /**
+     * For a failure, its retry classification. Any value other than
+     * `BuildError` marks a transient / builder-internal failure — one that is
+     * not a property of the derivation, so a retry layer may re-run it (e.g. on
+     * a larger or healthy node) and a durable reuse layer must not cache it
+     * against the build key.
+     */
+    FailureClass failureClass = FailureClass::BuildError;
+
+    /**
+     * For a `ResourceExhausted` failure, an optional human-readable hint about
+     * what ran out (e.g. `"killed-for-memory; peak 4.2 GiB"`), so a scheduler
+     * can right-size a retry instead of guessing. Empty when unknown / N/A.
+     */
+    std::string resourceHint;
+
+    /**
+     * Whether this failure is transient / builder-internal rather than
+     * build-intrinsic — the signal a retry layer keys on. Derived from
+     * `failureClass` so there is one source of truth.
+     */
+    bool failureIsTransient() const
+    {
+        return failureClass != FailureClass::BuildError;
+    }
 
     bool operator==(const BuildResult &) const noexcept;
     std::strong_ordering operator<=>(const BuildResult &) const noexcept;

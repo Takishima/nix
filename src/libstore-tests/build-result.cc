@@ -106,6 +106,20 @@ INSTANTIATE_TEST_SUITE_P(
                 .deduplicated = true,
                 .builderId = "builder-7",
             },
+        },
+        std::pair{
+            // Failure classification + resource hint (a builder-internal OOM).
+            "resource-exhausted",
+            BuildResult{
+                .inner{BuildResult::Failure{{
+                    .status = BuildResult::Failure::MiscFailure,
+                    .msg = HintFmt("builder ran out of memory"),
+                }}},
+                .timesBuilt = 1,
+                .exitCode = 137,
+                .failureClass = BuildResult::FailureClass::ResourceExhausted,
+                .resourceHint = "killed-for-memory; peak 4.2 GiB",
+            },
         }));
 
 } // namespace nix

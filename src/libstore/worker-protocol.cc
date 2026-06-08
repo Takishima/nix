@@ -287,8 +287,12 @@ BuildResult WorkerProto::Serialise<BuildResult>::read(const StoreDirConfig & sto
         conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
         res.exitCode = (int64_t) exitCode;
         // Deferred dedup/fleet set, after the frozen core
-        // (builderId, deduplicated — see serve-diag-core.cc).
+        // (builderId, deduplicated, then the failure-class/resource-hint pair —
+        // see serve-diag-core.cc).
         conn.from >> res.builderId >> res.deduplicated;
+        uint64_t failureClass = 0;
+        conn.from >> failureClass >> res.resourceHint;
+        res.failureClass = (BuildResult::FailureClass) failureClass;
     }
 
     res.inner = std::visit(
@@ -352,8 +356,10 @@ void WorkerProto::Serialise<BuildResult>::write(
         if (conn.version.features.contains(WorkerProto::featureBuildLogQuery)) {
             conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
             // Deferred dedup/fleet set, after the frozen core
-            // (builderId, deduplicated — see serve-diag-core.cc).
+            // (builderId, deduplicated, then the failure-class/resource-hint
+            // pair — see serve-diag-core.cc).
             conn.to << res.builderId << res.deduplicated;
+            conn.to << (uint64_t) res.failureClass << res.resourceHint;
         }
     };
 

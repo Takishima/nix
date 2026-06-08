@@ -154,9 +154,12 @@ struct BuildResult
     int64_t exitCode = 0;
     std::string logTail;
 
-    // unstable (>= {2,99}) — DEFERRED, layout NOT promised (builderId, deduplicated)
+    // unstable (>= {2,99}) — DEFERRED, layout NOT promised (builderId,
+    // deduplicated, then the failure-class/resource-hint pair)
     std::string builderId;
     uint8_t deduplicated = 0;
+    uint64_t failureClass = 0;
+    std::string resourceHint;
 };
 
 std::string dummyHash()
@@ -205,6 +208,8 @@ void write(Sink & to, Version v, const BuildResult & res)
     if (v >= Vunstable) {
         to.putString(res.builderId);
         to.putInt(res.deduplicated);
+        to.putInt(res.failureClass);
+        to.putString(res.resourceHint);
     }
 }
 
@@ -256,6 +261,8 @@ BuildResult read(Source & from, Version v)
     if (v >= Vunstable) {
         res.builderId = from.getString();
         res.deduplicated = uint8_t(from.getInt());
+        res.failureClass = from.getInt();
+        res.resourceHint = from.getString();
     }
 
     return res;

@@ -843,6 +843,19 @@ Extend `BuildResult` (and its serialisers) with, all optional/back-compat:
   durable reuse cache (§4.3.5, §4.7.3; contrast `CachedFailure`) — and it is
   the signal any retry layer keys on (§4.7, requirement 5).
 
+  > **Landed (the fields):** `BuildResult` now carries a `failureClass`
+  > (`BuildError` / `ResourceExhausted` / `Evicted` / `Infra`, defaulting to the
+  > build-intrinsic `BuildError`) and an optional `resourceHint`, with a derived
+  > `failureIsTransient()` predicate, serialized on the serve, worker, and JSON
+  > paths after the deferred dedup/fleet set and characterised by
+  > `src/libstore-tests`. They ride the **deferred** set (alongside
+  > `builderId`/`deduplicated`), so they stay behind the unstable serve version
+  > and the worker `build-log-query` feature until the freeze (Blocker 3 / §7).
+  > The *consumers* — a backend that classifies its own OOM/eviction failures,
+  > and the durable-reuse layer that must not cache a transient one — are part of
+  > the still-deferred elastic-backend work; the legacy `TransientFailure` status
+  > stays for back-compat but is now subsumed by the structured `failureClass`.
+
 Crucially, the builder must **persist** the build log
 (`LogStore::addBuildLog`, `local-store.cc:1629`) instead of discarding it.
 That means **removing the `keepLog = false` / `verbosity = lvlError`**

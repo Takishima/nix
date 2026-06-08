@@ -331,13 +331,15 @@ VERSIONED_CHARACTERIZATION_TEST(
         std::tuple<BuildResult, BuildResult, BuildResult> t{
             BuildResult{
                 .inner{BuildResult::Failure{{
-                    .status = BuildResult::Failure::OutputRejected,
-                    .msg = HintFmt("no idea why"),
+                    .status = BuildResult::Failure::MiscFailure,
+                    .msg = HintFmt("builder ran out of memory"),
                 }}},
                 .logRef = "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
                 .failurePhase = "build",
-                .exitCode = 1,
-                .logTail = "error: command failed\n",
+                .exitCode = 137,
+                .logTail = "Killed\n",
+                .failureClass = BuildResult::FailureClass::ResourceExhausted,
+                .resourceHint = "killed-for-memory; peak 4.2 GiB",
             },
             BuildResult{
                 .inner{BuildResult::Failure{{

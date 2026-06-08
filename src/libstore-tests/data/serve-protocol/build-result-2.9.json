@@ -1,13 +1,15 @@
 [
   {
-    "errorMsg": "no idea why",
-    "exitCode": 1,
+    "errorMsg": "builder ran out of memory",
+    "exitCode": 137,
+    "failureClass": "ResourceExhausted",
     "failurePhase": "build",
     "isNonDeterministic": false,
     "logRef": "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
-    "logTail": "error: command failed\n",
+    "logTail": "Killed\n",
+    "resourceHint": "killed-for-memory; peak 4.2 GiB",
     "startTime": 0,
-    "status": "OutputRejected",
+    "status": "MiscFailure",
     "stopTime": 0,
     "success": false,
     "timesBuilt": 0

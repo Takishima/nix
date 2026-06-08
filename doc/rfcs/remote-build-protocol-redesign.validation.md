@@ -451,12 +451,17 @@ of the three freezes** above. They are tracked here so the plan stays complete:
   | **R-class** | a builder-internal failure (e.g. OOM / exit 137 under a memory cap) vs. a build-intrinsic failure | the `BuildResult` failure carries a **transient/retryable** class + (for resource exhaustion) a resource hint, *distinct* from a build-error class; a transient failure is **not** cached/reused — no key poisoning (RFC §4.4) |
   | **M-arch** | concurrent builds of the same package for `x86_64-linux` and `aarch64-linux` against one endpoint | **two distinct keys, never coalesced**; each result reused only for its own system (RFC §4.7; guardrail §8.1 #1) |
 
-  > **Placement decided: throw-away prototype, not real tests.** Both exercise
-  > Phase-3 *coordinator* semantics (failure classification + retry sizing; the
-  > build-key definition) that have no production code yet, and the §4.4
-  > classification fields ride the **deferred** serve set — so a `tests/functional`
-  > or `src/libstore-tests` test would have nothing real to drive. They live in
-  > the Workstream-A coordinator prototype (`make check-fwd`):
+  > **Placement decided: throw-away prototype, not real tests** — for the
+  > *behaviour*. The §4.4 classification **fields themselves now exist in-tree**
+  > (`BuildResult::failureClass` / `resourceHint` / `failureIsTransient()`,
+  > serialized on the serve/worker/JSON paths after the deferred set and
+  > characterised by `src/libstore-tests` — a `ResourceExhausted` + resource-hint
+  > sample in the build-result JSON and the serve-2.9 / worker `build-log-query`
+  > wire fixtures). What remains prototype-only is the *retry/no-cache behaviour*:
+  > both scenarios still exercise Phase-3 *coordinator* semantics (failure
+  > classification → retry sizing; the build-key definition) that have no
+  > production driver yet, so the end-to-end assertions live in the Workstream-A
+  > coordinator prototype (`make check-fwd`):
   > **R-class** — `tests/r-class.sh` (10 assertions: OOM/exit-137 → `class=transient`
   > + `hint=memory`, distinct from a build-error class, and a re-run of the same
   > key starts a fresh build — proving the failure is not cached / no key

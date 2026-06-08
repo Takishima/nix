@@ -127,6 +127,33 @@ static BuildResult::Failure::Status failureStatusFromString(std::string_view str
     throw Error("unknown built result failure status '%s'", str);
 }
 
+static constexpr std::array<std::pair<BuildResult::FailureClass, std::string_view>, 4> failureClassStrings{{
+#define ENUM_ENTRY(e) {BuildResult::FailureClass::e, #e}
+    ENUM_ENTRY(BuildError),
+    ENUM_ENTRY(ResourceExhausted),
+    ENUM_ENTRY(Evicted),
+    ENUM_ENTRY(Infra),
+#undef ENUM_ENTRY
+}};
+
+static std::string_view failureClassToString(BuildResult::FailureClass cls)
+{
+    for (const auto & [enumVal, str] : failureClassStrings) {
+        if (enumVal == cls)
+            return str;
+    }
+    throw Error("unknown failure class: %d", static_cast<int>(cls));
+}
+
+static BuildResult::FailureClass failureClassFromString(std::string_view str)
+{
+    for (const auto & [enumVal, enumStr] : failureClassStrings) {
+        if (enumStr == str)
+            return enumVal;
+    }
+    throw Error("unknown build result failure class '%s'", str);
+}
+
 bool BuildError::operator==(const BuildError & other) const noexcept
 {
     return status == other.status && isNonDeterministic == other.isNonDeterministic && message() == other.message();
@@ -185,6 +212,12 @@ void adl_serializer<BuildResult>::to_json(json & res, const BuildResult & br)
     if (!br.builderId.empty()) {
         res["builderId"] = br.builderId;
     }
+    if (br.failureClass != BuildResult::FailureClass::BuildError) {
+        res["failureClass"] = failureClassToString(br.failureClass);
+    }
+    if (!br.resourceHint.empty()) {
+        res["resourceHint"] = br.resourceHint;
+    }
 
     // Handle success or failure variant
     std::visit(
@@ -242,6 +275,12 @@ BuildResult adl_serializer<BuildResult>::from_json(const json & _json)
     }
     if (auto builderId = optionalValueAt(json, "builderId")) {
         br.builderId = getString(*builderId);
+    }
+    if (auto failureClass = optionalValueAt(json, "failureClass")) {
+        br.failureClass = failureClassFromString(getString(*failureClass));
+    }
+    if (auto resourceHint = optionalValueAt(json, "resourceHint")) {
+        br.resourceHint = getString(*resourceHint);
     }
 
     // Determine success or failure based on success field

@@ -100,35 +100,38 @@ These also demonstrate the core is **not Hydra-specific**: the `nix` CLI and the
 
 ## 5. What this sign-off does **not** cover
 
-1. **The deferred dedup/fleet set (H3)** — `deduplicated`, `builderId`. Their
-   *semantics* are defined by the Build Registry and depend on the Phase 3 design
-   settling (Blocker 3), so their wire layout must **not** freeze at `2.9`. See
-   §6 — this is the one thing the freeze must actively keep out.
-2. **The §4.4 failure-classification fields** (transient/retryable class +
-   resource hint) — reserved, deferred with the elastic-backend design.
-3. **The internal coordinator interface** — that is F-INT, with its own
+1. **The deferred dedup/fleet set (H3)** — `deduplicated`, `builderId`, and the
+   §4.4 failure-classification pair `failureClass` / `resourceHint`. The fields
+   exist in `BuildResult` and serialize today on the unstable `2.9` wire (after
+   the diagnostic core), but their *semantics* are defined by the Build Registry
+   / elastic-backend design and depend on the Phase 3 design settling
+   (Blocker 3), so their wire layout must **not** freeze at `2.9`. See §6 — this
+   is the one thing the freeze must actively keep out.
+2. **The internal coordinator interface** — that is F-INT, with its own
    [dossier](./remote-build-protocol-redesign.f-int-signoff.md).
-4. **`D3.4`, the soak.** `D3.1` fixes the layout; the ≥1-release-cycle soak on
+3. **`D3.4`, the soak.** `D3.1` fixes the layout; the ≥1-release-cycle soak on
    the unstable `2.9` version then runs (clock starts at sign-off) before the
    actual `latest` bump. Time-gated, not a coding item.
 
 ## 6. The one open layout item the review must settle
 
 **The deferred set currently shares the `2.9` gate in the production
-serializer.** `serve-protocol.cc` writes/reads `builderId` and `deduplicated`
+serializer.** `serve-protocol.cc` writes/reads the deferred set —
+`builderId`, `deduplicated`, and the §4.4 `failureClass` / `resourceHint` pair —
 under the *same* `version >= {2,9}` guard as the frozen core, and the
 `build-result.hh` comment documents this as deliberate "under the same unstable
 gate" behaviour — which is harmless **today** (the `2.9` wire is unstable and
 only offered under an experimental feature, so both peers agree).
 
 But the **candidate frozen layout** in `serve-diag-core.cc` deliberately splits
-them: the diagnostic core at `>= {2,9}`, and `builderId`/`deduplicated` at a
-*later* unstable version (`{2,99}` in the model). Freezing `2.9` therefore is
-**not** a pure "retarget the goldens" step: the freeze PR must **move
-`builderId`/`deduplicated` to a later unstable gate** so the bump to `latest =
-2.9` freezes the core *only* and leaves the deferred set unfrozen (Blocker 3 / §7
-guardrail 7: new fields go after the version guard and the deferred set stays
-behind an unstable version until its semantics settle).
+them: the diagnostic core at `>= {2,9}`, and the whole deferred set at a *later*
+unstable version (`{2,99}` in the model). Freezing `2.9` therefore is **not** a
+pure "retarget the goldens" step: the freeze PR must **move the deferred set
+(`builderId`, `deduplicated`, `failureClass`, `resourceHint`) to a later unstable
+gate** so the bump to `latest = 2.9` freezes the core *only* and leaves the
+deferred set unfrozen (Blocker 3 / §7 guardrail 7: new fields go after the
+version guard and the deferred set stays behind an unstable version until its
+semantics settle).
 
 **Decision for `D3.1`:** approve the diagnostic core at `2.9` **and** the
 relocation of the deferred set to a later unstable gate as part of the freeze.
