@@ -2,34 +2,56 @@
 
 | | |
 |------------------|------------------------------------------------|
-| **Status**       | Review request — layout + back-compat proven; awaiting the serve-protocol maintainer's `D3.1` sign-off, which then starts the `D3.4` soak clock |
-| **Gate**         | F-SERVE-DIAG (freeze the serve diagnostic core; bump `SERVE_PROTOCOL_VERSION` → `2.9`) |
+| **Status**       | ⏳ **`D3.1` signed off (2026-06-08); `D3.2` satisfied; `D3.4` soak in progress (clock started 2026-06-08).** The layout is approved and fixed for the soak; the wire bump (and the deferred-set relocation) lands at soak completion — **not yet done**. `SERVE_PROTOCOL_VERSION` deliberately stays `2.8`. |
+| **Gate**         | F-SERVE-DIAG (freeze the serve diagnostic core; bump `SERVE_PROTOCOL_VERSION` → `2.9` *at soak end*) |
 | **Owner of the decision** | libstore/serve-protocol maintainer (`D3.1`). Hydra review (`D4`) is solicited but **non-blocking** |
 | **Companion to** | the [validation plan](./remote-build-protocol-redesign.validation.md) (F-SERVE-DIAG checklist), the [decisions record](./remote-build-protocol-redesign.decisions.md) (Blocker 3), and [§4.4](./remote-build-protocol-redesign.md)/[§7](./remote-build-protocol-redesign.md) |
 
-Like the [F-INT dossier](./remote-build-protocol-redesign.f-int-signoff.md), this
-packages the maintainer decision into one reviewable place: the exact field set
-and byte order proposed for the `2.9` freeze, the back-compat guarantees and the
-golden evidence for them, the in-tree consumers, what is explicitly **not** being
-frozen, and the one layout decision the review must settle.
+## 0. Decision record
 
-## 1. The decision requested (`D3.1`)
+**`D3.1` is signed off as of 2026-06-08, and the `D3.4` soak clock starts now.**
+The diagnostic-core field set and its byte layout (§2, §3) are approved and
+**fixed for the duration of the soak** on the strength of the proven back-compat
+matrix (§3) and the in-tree consumers (§4).
+
+- **Who:** the RFC owner, acting as the libstore/serve-protocol maintainer for
+  this branch's RFC process — **not** an upstream NixOS organisation sign-off.
+- **What is approved (`D3.1`):** the four diagnostic-core fields, their order,
+  the `QueryBuildLog` op, and the freeze-time plan to relocate the deferred set
+  off the `2.9` gate (§6). The layout is now treated as fixed; any change during
+  the soak restarts the clock.
+- **`D3.2` (satisfied):** in-tree consumers exercise the core — `nix log` over
+  serve (`serve-build-log.sh`) and over `ssh-ng` (`ssh-ng-build-log.sh`), and the
+  `ssh://` hook's fail-loud render consuming `logTail` (`build-remote-fail-loud.sh`).
+- **`D3.4` (in progress, time-gated):** the ≥1-release-cycle soak on the
+  *unstable* `2.9` version begins 2026-06-08. This is a calendar gate, not a
+  decision — it cannot be shortened.
+- **What is deliberately NOT done:** the wire is **not** bumped.
+  `SERVE_PROTOCOL_VERSION` stays `2.8`; `2.9` is still offered only under the
+  `serve-build-logs` experimental feature. The bump + deferred-set relocation +
+  golden retarget is the freeze PR, which lands **after** the soak — this is the
+  whole point of the soak (catch a layout bug while the bytes are still
+  changeable, per §7's "cannot be walked back").
+
+This document records and packages that decision. The original review request
+follows unchanged.
+
+## 1. The decision (`D3.1`: requested → granted)
 
 > **Approve the serve diagnostic-core field set and its byte layout as the frozen
-> `2.9` extension, so `SERVE_PROTOCOL_VERSION` can be bumped to `2.9` and the
-> one-release-cycle soak (`D3.4`) can begin.**
+> `2.9` extension, so the one-release-cycle soak (`D3.4`) can begin.**
 
-Tick these:
+Ticked at sign-off (2026-06-08):
 
-- [ ] The **field set** frozen at `2.9` is exactly the **diagnostic core**:
+- [x] The **field set** frozen at `2.9` is exactly the **diagnostic core**:
   `logRef`, `failurePhase`, `exitCode`, `logTail` — and nothing else.
-- [ ] The **byte order** is acceptable: the four fields are appended **after**
+- [x] The **byte order** is acceptable: the four fields are appended **after**
   `builtOutputs`, in that order, `exitCode` as a `uint64`, each string using the
   existing empty-string-means-absent idiom — guarded `version >= {2,9}`.
-- [ ] The **`QueryBuildLog` serve command** (`Command = 10`, guarded `>= {2,9}`)
+- [x] The **`QueryBuildLog` serve command** (`Command = 10`, guarded `>= {2,9}`)
   is part of the freeze.
-- [ ] The **deferred set must be relocated** off the `2.9` gate at freeze — see
-  §6, the one open layout item.
+- [x] The **deferred set must be relocated** off the `2.9` gate at freeze — see
+  §6, the one open layout item (this is the freeze-PR action, accepted as the plan).
 
 Approving `D3.1` does **not** itself bump the wire; it fixes the layout so the
 soak clock (`D3.4`) starts. The bump lands at the end of the soak.

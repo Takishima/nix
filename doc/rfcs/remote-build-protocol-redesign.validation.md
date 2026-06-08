@@ -27,7 +27,7 @@
 > |---|---|---|
 > | **F-INT** | ✅ **Frozen** (signed off 2026-06-08) | — (the §3 internal coordinator interface is fully validated by Workstream A and now signed off; productionizing it in `libstore`/`daemon` is Phase 3 *implementation*, not a freeze gate) |
 > | **F-WIRE** | ⏳ **Nix-side cleared**, serve half deferred | the worker-protocol ops are Nix-internal (B+C, green); the **serve-side** fields (`deduplicated`/`builderId`, gate **H3**) freeze later — gated on the Phase 3 coordinator/dedup design settling (**design-maturity, internal — not a Hydra blocker**), with Hydra review solicited non-blocking. T1–T3 (B) and C-a…C-f (C) green. See [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks). |
-> | **F-SERVE-DIAG** | ⏳ **Layout + back-compat proven**, freeze on Nix-side criteria + soak | **maintainer sign-off** + an **in-tree consumer** (`nix log` over serve + the `ssh://` hook's fail-loud render) + the **≥1-cycle soak**; golden back-compat (D3.3) proven in-prototype and **ported into `src/libstore-tests`** (`serve-diag-core.cc`, `SERVE_PROTOCOL_VERSION` unbumped). **Hydra sign-off + queue-runner branch are solicited during the soak, not blockers** (revised 2026-06 — the frozen core is audited non-Hydra-specific). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
+> | **F-SERVE-DIAG** | ⏳ **Layout signed off (`D3.1`, 2026-06-08); soak in progress** — bump at soak end | **maintainer sign-off** + an **in-tree consumer** (`nix log` over serve + the `ssh://` hook's fail-loud render) + the **≥1-cycle soak**; golden back-compat (D3.3) proven in-prototype and **ported into `src/libstore-tests`** (`serve-diag-core.cc`, `SERVE_PROTOCOL_VERSION` unbumped). **Hydra sign-off + queue-runner branch are solicited during the soak, not blockers** (revised 2026-06 — the frozen core is audited non-Hydra-specific). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
 >
 > The honest one-liner: **F-INT resolves now; F-SERVE-DIAG freezes on Nix-side
 > review + an in-tree consumer + a soak (Hydra invited, not blocking); F-WIRE's
@@ -292,18 +292,21 @@ see [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owe
 
 **The four freeze criteria** (Blocker 3, revised 2026-06 — *all* must hold to bump to 2.9):
 
-- [ ] **D3.1** — the **libstore/serve-protocol maintainer** has signed off on the
-  exact field set and byte order. *(Hydra review is solicited during the soak as
-  input, not as a blocker — see below.)*
-- [ ] **D3.2** — at least one **in-tree serve consumer** exercises the core
-  end-to-end: `nix log` over the serve path (`QueryBuildLog`) **and** the
-  `ssh://` `build-remote` hook rendering `logTail`/`failurePhase`/`exitCode` on
-  failure (fail-loud, §4.9). Proves the layout against a real consumer with no
+- [x] **D3.1 — SIGNED OFF (2026-06-08)** — the **libstore/serve-protocol
+  maintainer** (the RFC owner in that role for this branch) has signed off on the
+  exact field set and byte order; the layout is fixed for the soak. *(Hydra
+  review is solicited during the soak as input, not as a blocker — see below.)*
+- [x] **D3.2 — satisfied** — in-tree serve consumers exercise the core
+  end-to-end: `nix log` over the serve path (`QueryBuildLog`, `serve-build-log.sh`)
+  and over `ssh-ng` (`ssh-ng-build-log.sh`), **and** the `ssh://` `build-remote`
+  hook rendering `logTail`/`failurePhase`/`exitCode` on failure (fail-loud, §4.9,
+  `build-remote-fail-loud.sh`). Proves the layout against real consumers with no
   external dependency.
-- [ ] **D3.3** — D2's golden tests prove round-trip at 2.8 and 2.9 **and** that a
+- [x] **D3.3** — D2's golden tests prove round-trip at 2.8 and 2.9 **and** that a
   2.8 peer ignores 2.9 fields (full back-compat matrix, both directions).
-- [ ] **D3.4** — the field set has soaked on the **unstable version for ≥1
-  release cycle** with no layout change.
+- [ ] **D3.4** — **in progress; soak clock started 2026-06-08.** The field set
+  must soak on the **unstable version for ≥1 release cycle** with no layout
+  change before the `SERVE_PROTOCOL_VERSION` bump. Time-gated, not a decision.
 
 - **D4 — open the Hydra coordination thread** (RFC Q4 puts the coordination
   itself out of scope of the RFC) **during the soak, to solicit review** — no
@@ -393,8 +396,10 @@ the serve-side fields (**H3**) are deferred until the Phase 3 design settles —
   Hydra-specific; Hydra review of the eventual layout is solicited, non-blocking.
   The worker-protocol ops carry no Hydra gate. See [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks).
 
-**Bump `SERVE_PROTOCOL_VERSION` → `(2<<8|9)` (F-SERVE-DIAG):** ⏳ layout + back-compat
-proven; freezes on Nix-side criteria + soak (Hydra review solicited, not blocking — revised 2026-06).
+**Bump `SERVE_PROTOCOL_VERSION` → `(2<<8|9)` (F-SERVE-DIAG):** ⏳ **layout signed
+off (`D3.1`, 2026-06-08); soak (`D3.4`) in progress — bump lands at soak end.**
+`SERVE_PROTOCOL_VERSION` deliberately stays `(2<<8|8)` during the soak (Hydra
+review solicited, not blocking — revised 2026-06).
 - [x] D1 implemented behind unstable (modelled); D2 golden/characterisation
   tests green (Workstream D prototype, `make check`).
 - [x] **D3.3** (golden back-compat both ways) — **ported into `src/libstore-tests`**
@@ -408,16 +413,22 @@ proven; freezes on Nix-side criteria + soak (Hydra review solicited, not blockin
   without bumping the wire. At freeze, the goldens retarget the real serializer
   and the self-contained model is deleted. *(The literal checklist item is now
   closed; D3.1/D3.2/D3.4 below still gate the freeze.)*
-- [ ] **D3.1** (libstore/serve-protocol maintainer sign-off on the field set +
-  byte order) — Nix-side, in-repo. The reviewable package for this decision —
-  the exact frozen field set + byte layout, the back-compat guarantees mapped to
-  the golden cases, the in-tree consumers, and the one open layout item (the
-  deferred set must be relocated off the `2.9` gate at freeze) — is the
-  [F-SERVE-DIAG sign-off dossier](./remote-build-protocol-redesign.f-serve-diag-signoff.md).
-- [ ] **D3.2** (an **in-tree** serve consumer exercises the core: `nix log` over
-  serve + the `ssh://` hook's fail-loud render) — Nix-side, in-repo.
-- [ ] **D3.4** (≥1-cycle soak on the unstable version) — time-gated; the clock
-  starts once D3.1 fixes the layout. Hydra review (D4) is solicited in this
+- [x] **D3.1 — SIGNED OFF (2026-06-08)** (libstore/serve-protocol maintainer
+  sign-off on the field set + byte order). Granted by the RFC owner acting in
+  that role for this branch; the layout is now fixed for the soak. The decision
+  is recorded in the
+  [F-SERVE-DIAG sign-off dossier](./remote-build-protocol-redesign.f-serve-diag-signoff.md)
+  §0, which packages the frozen field set + byte layout, the back-compat
+  guarantees mapped to the golden cases, the in-tree consumers, and the
+  freeze-time deferred-set relocation.
+- [x] **D3.2 — satisfied** (in-tree serve consumers exercise the core):
+  `nix log` over serve (`serve-build-log.sh`) and over `ssh-ng`
+  (`ssh-ng-build-log.sh`), and the `ssh://` hook's fail-loud render consuming
+  `logTail` (`build-remote-fail-loud.sh`).
+- [ ] **D3.4** (≥1-cycle soak on the unstable version) — **in progress; clock
+  started 2026-06-08** when `D3.1` fixed the layout. Time-gated: a calendar gate,
+  not a decision, so it cannot be shortened; the `SERVE_PROTOCOL_VERSION` bump is
+  the freeze PR that lands at soak end. Hydra review (D4) is solicited in this
   window but does not gate the bump.
 - *Solicited, not blocking (revised 2026-06):* a named Hydra maintainer's review
   and a `hydra-queue-runner` consumer branch — the frozen core is audited
