@@ -66,6 +66,36 @@ MATCHER_P(AuthorityMatches, authority, "")
     return generic->authority == authority;
 }
 
+MATCHER_P(SchemeMatches, scheme, "")
+{
+    *result_listener << "where the scheme of " << arg.render() << " is " << scheme;
+    auto * generic = std::get_if<StoreReference::Specified>(&arg.variant);
+    if (!generic)
+        return false;
+    return generic->scheme == scheme;
+}
+
+TEST(machines, getMachinesSchemelessDefaultsToSsh)
+{
+    auto actual = Machine::parseConfig({"TEST_ARCH-TEST_OS"}, "mac");
+    ASSERT_THAT(actual, SizeIs(1));
+    EXPECT_THAT(actual[0], Field(&Machine::storeUri, SchemeMatches("ssh")));
+}
+
+TEST(machines, getMachinesSchemelessUsesSshNgWhenOptedIn)
+{
+    auto actual = Machine::parseConfig({"TEST_ARCH-TEST_OS"}, "mac", /*useSshNgForRemoteBuilds=*/true);
+    ASSERT_THAT(actual, SizeIs(1));
+    EXPECT_THAT(actual[0], Field(&Machine::storeUri, SchemeMatches("ssh-ng")));
+}
+
+TEST(machines, getMachinesExplicitSchemeUnaffectedByOptIn)
+{
+    auto actual = Machine::parseConfig({"TEST_ARCH-TEST_OS"}, "ssh://mac", /*useSshNgForRemoteBuilds=*/true);
+    ASSERT_THAT(actual, SizeIs(1));
+    EXPECT_THAT(actual[0], Field(&Machine::storeUri, SchemeMatches("ssh")));
+}
+
 TEST(machines, getMachinesWithNewLineSeparator)
 {
     auto actual = Machine::parseConfig({}, "nix@scratchy.labs.cs.uu.nl\nnix@itchy.labs.cs.uu.nl");

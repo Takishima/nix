@@ -14,17 +14,20 @@ Machine::Machine(
     decltype(speedFactor) speedFactor,
     decltype(supportedFeatures) supportedFeatures,
     decltype(mandatoryFeatures) mandatoryFeatures,
-    decltype(sshPublicHostKey) sshPublicHostKey)
+    decltype(sshPublicHostKey) sshPublicHostKey,
+    bool useSshNgForRemoteBuilds)
     : storeUri(
           StoreReference::parse(
-              // Backwards compatibility: if the URI is schemeless, is not a path,
-              // and is not one of the special store connection words, prepend
-              // ssh://.
+              // A schemeless builder that is not a path or a special store
+              // connection word means SSH. The transport defaults to the legacy
+              // serve protocol (`ssh://`); `useSshNgForRemoteBuilds` opts a
+              // schemeless builder onto the streaming/`ssh-ng://` transport
+              // instead.
               storeUri.find("://") != std::string::npos || storeUri.find("/") != std::string::npos || storeUri == "auto"
                       || storeUri == "daemon" || storeUri == "local" || hasPrefix(storeUri, "auto?")
                       || hasPrefix(storeUri, "daemon?") || hasPrefix(storeUri, "local?") || hasPrefix(storeUri, "?")
                   ? storeUri
-                  : "ssh://" + storeUri))
+                  : (useSshNgForRemoteBuilds ? "ssh-ng://" : "ssh://") + storeUri))
     , systemTypes(systemTypes)
     , sshKey(sshKey)
     , maxJobs(maxJobs)
@@ -127,7 +130,7 @@ static std::vector<std::string> expandBuilderLines(const std::string & builders)
     return result;
 }
 
-static Machine parseBuilderLine(const StringSet & defaultSystems, const std::string & line)
+static Machine parseBuilderLine(const StringSet & defaultSystems, const std::string & line, bool useSshNgForRemoteBuilds)
 {
     const auto tokens = tokenizeString<std::vector<std::string>>(line);
 
@@ -198,25 +201,28 @@ static Machine parseBuilderLine(const StringSet & defaultSystems, const std::str
         // `mandatoryFeatures`
         isSet(6) ? tokenizeString<StringSet>(tokens[6], ",") : StringSet{},
         // `sshPublicHostKey`
-        isSet(7) ? ensureBase64(7) : ""};
+        isSet(7) ? ensureBase64(7) : "",
+        // `useSshNgForRemoteBuilds` (the schemeless-default transport, not a column)
+        useSshNgForRemoteBuilds};
     // `isElastic` (column #9): a non-constructor field, set after the fact.
     machine.isElastic = isSet(8) && parseBoolField(8);
     return machine;
 }
 
-static Machines parseBuilderLines(const StringSet & defaultSystems, const std::vector<std::string> & builders)
+static Machines parseBuilderLines(
+    const StringSet & defaultSystems, const std::vector<std::string> & builders, bool useSshNgForRemoteBuilds)
 {
     Machines result;
     std::transform(builders.begin(), builders.end(), std::back_inserter(result), [&](auto && line) {
-        return parseBuilderLine(defaultSystems, line);
+        return parseBuilderLine(defaultSystems, line, useSshNgForRemoteBuilds);
     });
     return result;
 }
 
-Machines Machine::parseConfig(const StringSet & defaultSystems, const std::string & s)
+Machines Machine::parseConfig(const StringSet & defaultSystems, const std::string & s, bool useSshNgForRemoteBuilds)
 {
     const auto builderLines = expandBuilderLines(s);
-    return parseBuilderLines(defaultSystems, builderLines);
+    return parseBuilderLines(defaultSystems, builderLines, useSshNgForRemoteBuilds);
 }
 
 } // namespace nix

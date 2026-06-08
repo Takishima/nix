@@ -1434,7 +1434,17 @@ the log fixes.
 * **Phase 7 — Converge on `ssh-ng://`.** Make `ssh-ng://` the default,
   fully-featured distributed-build transport (native streaming + dedup),
   keep the serve protocol as the documented compatibility/Hydra surface
-  (kept additive throughout per §4.8 / **G7**).
+  (kept additive throughout per §4.8 / **G7**). *Landed (the opt-in on-ramp):*
+  a `use-ssh-ng-for-remote-builds` setting that resolves *schemeless* builders
+  (`mac`, `nix@mac`) to `ssh-ng://` instead of the legacy serve `ssh://`,
+  default off so no existing configuration changes transport and the serve path
+  stays the compatibility surface. Flipping the *default* to `ssh-ng://`
+  unconditionally is deferred until that transport is fully featured for
+  distributed builds — native dedup/streaming over `ssh-ng://` depends on the
+  Phase 3 coordinator wire, which is still deferred — so this phase ships the
+  migration switch now and the default-flip follows once the wire lands.
+  *Touches:* `machines.{cc,hh}`, `worker-settings.hh`, `build-remote.cc`,
+  `build/worker.cc`.
 
 ### 8.1 Forward-compatibility guardrails (don't foreclose the elastic backend)
 

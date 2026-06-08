@@ -283,6 +283,24 @@ public:
           This can drastically reduce build times if the network connection between the local machine and the remote build host is slow.
         )"};
 
+    Setting<bool> useSshNgForRemoteBuilds{
+        this,
+        false,
+        "use-ssh-ng-for-remote-builds",
+        R"(
+          When a [remote build machine](#conf-builders) is given without a URL
+          scheme (e.g. `mac` or `nix@mac` rather than `ssh://mac`), Nix has to
+          choose a transport. By default it uses the legacy *serve* protocol
+          (`ssh://`), which does not stream the remote builder's log to the
+          client.
+
+          Set this to `true` to make such schemeless builders use the
+          `ssh-ng://` transport instead, which streams build logs live and is
+          the direction remote building is converging on. Builders given with an
+          explicit scheme are unaffected. The default is `false` so existing
+          configurations keep their current transport.
+        )"};
+
     Setting<bool> useSubstitutes{
         this,
         true,
