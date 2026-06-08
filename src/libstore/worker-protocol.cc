@@ -280,18 +280,14 @@ BuildResult WorkerProto::Serialise<BuildResult>::read(const StoreDirConfig & sto
         }
     }
 
-    // Structured diagnostic core (RFC §4.4, G2/Gap C), appended after
-    // `builtOutputs`. Carried only when the peer offers the `build-log-query`
-    // feature (the same unstable diagnostic capability as `QueryBuildLog`);
-    // NOT frozen until the serve side bumps to 2.9. See decisions Blocker 3.
+    // Structured diagnostic core (RFC §4.4), appended after `builtOutputs`,
+    // gated on the `build-log-query` feature. See decisions Blocker 3.
     if (conn.version.features.contains(WorkerProto::featureBuildLogQuery)) {
         uint64_t exitCode = 0;
         conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
         res.exitCode = (int64_t) exitCode;
-        // Deferred dedup/fleet set (RFC §4.3, gate H3), appended *after* the
-        // frozen diagnostic-core layout. Semantics defined by the Phase 3 Build
-        // Registry; still behind the unstable feature. Order (builderId,
-        // deduplicated) mirrors serve-diag-core.cc. See Blocker 3.
+        // Deferred dedup/fleet set (gate H3), after the frozen core
+        // (builderId, deduplicated — see serve-diag-core.cc).
         conn.from >> res.builderId >> res.deduplicated;
     }
 

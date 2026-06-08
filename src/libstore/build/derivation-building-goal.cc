@@ -438,26 +438,20 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
 
     /* RFC `remote-build-protocol-redesign` Phase 3 (G3): when the build
        coordinator is enabled, relay this *resolved-derivation* build to the
-       per-store coordinator for cross-client dedup / attach / log fan-out,
-       instead of building it here. This is the general integration point — it
-       covers `BuildPaths`/`BuildPathsWithResults` (top-level `ssh-ng://` builds),
-       not only the hook-offloaded `BuildDerivation`.
+       per-store coordinator for cross-client dedup / attach / log fan-out
+       instead of building it here (the general integration point, covering
+       top-level `ssh-ng://` builds, not only hook-offloaded `BuildDerivation`).
 
        We branch *before* acquiring the output `PathLocks` so the coordinator's
        build child can take them itself (the cross-process lock floor, spike
        §1.3) without deadlocking against locks we would otherwise hold on the
        same store. `NIX_BUILD_COORDINATOR_INNER` (set by the coordinator in its
-       own build child) stops that child from relaying back — the recursion
-       guard. Only fires when this goal would otherwise build **locally** on this
-       store (`localBuildResult` is a `LocalBuildCapability`): a build that would
-       be offloaded to a remote builder via the hook (e.g. `--max-jobs 0` with
-       `--builders`) keeps going to the hook — the coordinator dedups the store
-       that actually runs the build, not the one offloading it. Same-store
-       `LocalStore`, normal builds only; check/repair, remote/eval stores,
-       hook-offloaded builds, and the inner build fall through to the existing
-       scheduling below. The relay blocks this goal until the shared build
-       finishes (correct, but serialises a multi-build Worker — a follow-up can
-       make it event-loop-driven like `buildWithHook`). */
+       build child) is the recursion guard that stops that child relaying back.
+       We only intercept builds that would otherwise run *locally* on this store:
+       a hook-offloaded build keeps going to the hook, so the coordinator dedups
+       the store that runs the build, not the one offloading it. The relay blocks
+       this goal until the shared build finishes — correct, but it serialises a
+       multi-build Worker (a follow-up can make it event-loop-driven). */
     if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator) && buildMode == bmNormal
         && std::holds_alternative<LocalBuildCapability>(localBuildResult)
         && getEnv("NIX_BUILD_COORDINATOR_INNER").value_or("").empty()

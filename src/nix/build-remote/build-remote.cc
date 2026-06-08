@@ -72,10 +72,7 @@ static std::string renderRemoteBuildLogTail(
     constexpr size_t maxLines = 25;
     try {
         std::optional<std::string> log;
-        /* Prefer the structured log tail the builder sent back in the
-           `BuildResult` (serve 2.9 / worker `build-log-query`, gated) — no
-           second round-trip. Fall back to fetching the full log over the
-           remote store (Gap A) for builders that don't send it yet. */
+        /* Prefer the inline tail (no round-trip); else fetch the full log. */
         if (!result.logTail.empty())
             log = result.logTail;
         else if (auto * logStore = dynamic_cast<LogStore *>(&remoteStore))

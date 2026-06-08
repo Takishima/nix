@@ -43,19 +43,14 @@ BuildResult ServeProto::Serialise<BuildResult>::read(const StoreDirConfig & stor
         }
     }
 
-    // Structured diagnostic core (RFC §4.4, G2/Gap C), appended after the 2.8
-    // `builtOutputs` block. Carried only on the *unstable* serve 2.9 wire (gated
-    // by the `serve-build-logs` experimental feature); NOT a back-compat promise
-    // until `SERVE_PROTOCOL_VERSION` bumps to 2.9. See decisions Blocker 3.
+    // Structured diagnostic core (RFC §4.4), appended after `builtOutputs`,
+    // gated on the unstable serve 2.9 wire. See decisions Blocker 3.
     if (conn.version >= ServeProto::Version{2, 9}) {
         uint64_t exitCode = 0;
         conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
         res.exitCode = (int64_t) exitCode;
-        // Deferred dedup/fleet set (RFC §4.3, gate H3), appended *after* the
-        // frozen diagnostic-core layout. Still unstable (no 2.9 bump); their
-        // semantics are defined by the Phase 3 Build Registry. Order
-        // (builderId, deduplicated) mirrors the candidate-layout guard in
-        // `serve-diag-core.cc`. See Blocker 3.
+        // Deferred dedup/fleet set (gate H3), after the frozen core
+        // (builderId, deduplicated — see serve-diag-core.cc).
         conn.from >> res.builderId >> res.deduplicated;
     }
 

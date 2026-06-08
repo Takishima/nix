@@ -232,14 +232,9 @@ struct BuildResult
     std::string logTail;
 
     /**
-     * Dedup/fleet-observability set (RFC §4.3, G3; the **deferred** serve set,
-     * gate H3). These are *defined* by the Phase 3 Build Registry / coordinator
-     * design (`build/build-registry.hh`) and so come **after** the frozen
-     * diagnostic-core layout above (`logRef`/`failurePhase`/`exitCode`/`logTail`),
-     * carried only on the *unstable* serve 2.9 wire (`serve-build-logs`) and the
-     * worker protocol's `build-log-query` feature. They are **not frozen** and do
-     * **not** bump `SERVE_PROTOCOL_VERSION` (decisions Blocker 3, guardrail
-     * §8.1 #7).
+     * Dedup/fleet-observability set (RFC §4.3, G3; deferred, gate H3), defined
+     * by the Phase 3 Build Registry (`build/build-registry.hh`). Serialized
+     * after the diagnostic-core fields above, under the same unstable gate.
      */
 
     /**
