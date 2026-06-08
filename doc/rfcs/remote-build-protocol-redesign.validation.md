@@ -375,7 +375,11 @@ assessed freezable; awaiting the maintainer's freeze decision.**
   protocol, registry, replay/refcount semantics are all validated), so this
   record **assesses F-INT freezable** — but the actual decision to freeze the
   internal interface belongs to the libstore/daemon maintainer, not to this
-  validation pass. Nothing further is owed from a coding session.
+  validation pass. The reviewable package for that decision — the exact frozen
+  surface, the invariants mapped to in-tree code, the per-gate evidence, the
+  explicit non-asks, and the residual risks — is the
+  [F-INT sign-off dossier](./remote-build-protocol-redesign.f-int-signoff.md).
+  Nothing further is owed from a coding session.
 
 **Freeze F-WIRE (Phase 3 public Build Session surface):** ⏳ Nix-side cleared;
 the serve-side fields (**H3**) are deferred until the Phase 3 design settles —

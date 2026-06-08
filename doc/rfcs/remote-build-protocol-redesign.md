@@ -14,7 +14,7 @@
 
 ## 0. Document set
 
-This RFC is the canonical document. Five companions hold detail that would
+This RFC is the canonical document. Six companions hold detail that would
 otherwise bloat it; each is linked from the relevant section below and is
 kept in sync with this file:
 
@@ -29,6 +29,11 @@ kept in sync with this file:
   execution plan that turns the "decided but not yet validated" work into
   sequenced Workstreams A–D, concrete test specs, and the three
   freeze-readiness checklists (F-INT / F-WIRE / F-SERVE-DIAG).
+* **[F-INT sign-off dossier](./remote-build-protocol-redesign.f-int-signoff.md)**
+  — the reviewable package for the libstore/daemon maintainer's F-INT decision:
+  the exact internal interface being frozen (the `BuildRegistry` operations + the
+  child↔coordinator control protocol), the invariants mapped to in-tree code, the
+  per-gate evidence, the explicit non-asks, and the residual risks.
 * **[Hydra coordination draft](./remote-build-protocol-redesign.hydra-coordination.md)**
   — the ready-to-post opening message for the external Hydra ↔ Nix thread that
   must sign off on the serve diagnostic core (§4.8, §7).
