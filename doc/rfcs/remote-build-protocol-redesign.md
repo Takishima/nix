@@ -34,6 +34,12 @@ kept in sync with this file:
   the exact internal interface being frozen (the `BuildRegistry` operations + the
   child↔coordinator control protocol), the invariants mapped to in-tree code, the
   per-gate evidence, the explicit non-asks, and the residual risks.
+* **[F-SERVE-DIAG sign-off dossier](./remote-build-protocol-redesign.f-serve-diag-signoff.md)**
+  — the reviewable package for the serve-protocol maintainer's `D3.1` decision:
+  the diagnostic-core field set + byte layout proposed for the `2.9` freeze, the
+  back-compat guarantees mapped to the golden cases, the in-tree consumers
+  (`D3.2`), and the one open layout item (relocating the deferred set off the
+  `2.9` gate at freeze).
 * **[Hydra coordination draft](./remote-build-protocol-redesign.hydra-coordination.md)**
   — the ready-to-post opening message for the external Hydra ↔ Nix thread that
   must sign off on the serve diagnostic core (§4.8, §7).

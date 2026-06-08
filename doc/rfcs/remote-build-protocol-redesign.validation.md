@@ -412,7 +412,11 @@ proven; freezes on Nix-side criteria + soak (Hydra review solicited, not blockin
   and the self-contained model is deleted. *(The literal checklist item is now
   closed; D3.1/D3.2/D3.4 below still gate the freeze.)*
 - [ ] **D3.1** (libstore/serve-protocol maintainer sign-off on the field set +
-  byte order) — Nix-side, in-repo.
+  byte order) — Nix-side, in-repo. The reviewable package for this decision —
+  the exact frozen field set + byte layout, the back-compat guarantees mapped to
+  the golden cases, the in-tree consumers, and the one open layout item (the
+  deferred set must be relocated off the `2.9` gate at freeze) — is the
+  [F-SERVE-DIAG sign-off dossier](./remote-build-protocol-redesign.f-serve-diag-signoff.md).
 - [ ] **D3.2** (an **in-tree** serve consumer exercises the core: `nix log` over
   serve + the `ssh://` hook's fail-loud render) — Nix-side, in-repo.
 - [ ] **D3.4** (≥1-cycle soak on the unstable version) — time-gated; the clock
