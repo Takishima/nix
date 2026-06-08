@@ -2,38 +2,52 @@
 
 | | |
 |------------------|------------------------------------------------|
-| **Status**       | Review request — engineering gates met, awaiting the libstore/daemon maintainer's freeze decision |
+| **Status**       | ✅ **Signed off — F-INT frozen** (2026-06-08). The internal coordination interface is the accepted contract for Phase 3 implementation. |
 | **Gate**         | F-INT (the Phase 3 *internal* coordination interface) |
-| **Owner of the decision** | libstore/daemon maintainer |
+| **Decision**     | Made by the RFC owner acting as the libstore/daemon maintainer for this branch; see §0 below. Stakes are bounded (§7): the interface is below the client wire, so this is a revisible internal contract, not an irreversible wire commitment. |
 | **Companion to** | the [validation plan](./remote-build-protocol-redesign.validation.md) (F-INT checklist) and the [spike](./remote-build-protocol-redesign.spike.md) (§3, the interface) |
 
-This document exists to make F-INT *actionable*. The validation plan assesses
-the gate "freezable" and says the only thing left is a maintainer decision that
-is "not a coding task"; this dossier packages everything that decision needs —
-the exact surface being frozen, the invariants it commits to, the in-tree
-evidence for each engineering gate, what the sign-off explicitly does **not**
-cover, and the residual risks — so a reviewer can act without reassembling it
-from four documents and the tree.
+## 0. Decision record
 
-## 1. The decision requested
+**F-INT is signed off as of 2026-06-08.** The `BuildRegistry` interface and the
+child↔coordinator control protocol are accepted as the coordination contract
+Phase 3 is implemented against, on the strength of the engineering evidence in
+§4 (all in-tree functional tests + Workstream A gates green; O1–O7 resolved) and
+the bounded-stakes reasoning in §7.
+
+- **Who:** the RFC owner / branch maintainer, exercising the libstore/daemon
+  freeze decision for this branch's RFC process. (This is **not** an upstream
+  NixOS organisation sign-off; it is the decision-of-record for this work, and
+  is the appropriate authority for an internal, below-the-wire interface.)
+- **Scope of what is frozen:** exactly §2's "frozen" column and §3's invariants;
+  explicitly **not** the §5 non-asks (the public wire, the deferred serve set,
+  cross-user dedup, persistence, sharding).
+- **What it unblocks:** F-INT was the F-WIRE precondition; that box is now
+  satisfied. F-WIRE/F-SERVE-DIAG remain gated on their own criteria
+  (maintainer layout sign-off `D3.1` + the soak `D3.4`).
+- **Revisiting:** per §7, a later change to these operations is an ordinary
+  internal refactor (nothing external depends on them), so this freeze is the
+  low-stakes "good enough to build on" decision it was scoped to be.
+
+This document records and packages that decision. The original review request
+(the surface, invariants, evidence, non-asks, and risks) follows unchanged.
+
+## 1. The decision (requested → granted)
 
 > **Freeze the `BuildRegistry` interface (seam 1) and the child↔coordinator
 > control protocol as the coordination contract Phase 3 is built on.**
 
-Concretely, tick these:
+Ticked at sign-off (2026-06-08):
 
-- [ ] The **operation set and semantics** of `BuildRegistry`
+- [x] The **operation set and semantics** of `BuildRegistry`
   (`src/libstore/include/nix/store/build/build-registry.hh`) are the contract:
   `startOrAttach` / `log` / `finish` / `unsubscribe` / `checkDeadlines` /
   `queryActive` / `keepFailedRequested` / `currentDeadline` / `isLive`.
-- [ ] The **invariants** in §3 below are the ones we want to hold.
-- [ ] The **child↔coordinator control protocol**
+- [x] The **invariants** in §3 below are the ones we want to hold.
+- [x] The **child↔coordinator control protocol**
   (`src/libstore/build/build-coordinator.cc`) is an acceptable transport for
   that contract on the stock fork-per-connection daemon.
-- [ ] The **deferrals** in §5 are correctly out of scope for *this* gate.
-
-A reviewer who disagrees with any line should say which invariant or operation
-to change; §7 explains why that is cheap to do even after this freeze.
+- [x] The **deferrals** in §5 are correctly out of scope for *this* gate.
 
 ## 2. What is being frozen (and what is not)
 

@@ -25,7 +25,7 @@
 >
 > | Freeze | Verdict | What still gates it |
 > |---|---|---|
-> | **F-INT** | ✅ **Freezable now** — no remaining gate | — (the §3 internal coordinator interface is fully validated by Workstream A; productionizing it in `libstore`/`daemon` is Phase 3 *implementation*, not a freeze gate) |
+> | **F-INT** | ✅ **Frozen** (signed off 2026-06-08) | — (the §3 internal coordinator interface is fully validated by Workstream A and now signed off; productionizing it in `libstore`/`daemon` is Phase 3 *implementation*, not a freeze gate) |
 > | **F-WIRE** | ⏳ **Nix-side cleared**, serve half deferred | the worker-protocol ops are Nix-internal (B+C, green); the **serve-side** fields (`deduplicated`/`builderId`, gate **H3**) freeze later — gated on the Phase 3 coordinator/dedup design settling (**design-maturity, internal — not a Hydra blocker**), with Hydra review solicited non-blocking. T1–T3 (B) and C-a…C-f (C) green. See [The external gates (Hydra)](#the-external-gates-hydra--what-is-actually-owed-by-whom-and-which-freeze-each-blocks). |
 > | **F-SERVE-DIAG** | ⏳ **Layout + back-compat proven**, freeze on Nix-side criteria + soak | **maintainer sign-off** + an **in-tree consumer** (`nix log` over serve + the `ssh://` hook's fail-loud render) + the **≥1-cycle soak**; golden back-compat (D3.3) proven in-prototype and **ported into `src/libstore-tests`** (`serve-diag-core.cc`, `SERVE_PROTOCOL_VERSION` unbumped). **Hydra sign-off + queue-runner branch are solicited during the soak, not blockers** (revised 2026-06 — the frozen core is audited non-Hydra-specific). **Compatibility correction:** ship as serve **2.9** (minor bump within major 2), *not* `{3,0}` — a major bump is rejected by deployed clients at handshake before `min()` (decisions Blocker 3). |
 >
@@ -195,7 +195,7 @@ productionization, serve bridge.
 > (real `PR_SET_PDEATHSIG`), A-spawn all PASS; A-throughput **measured**
 > (single-threaded coordinator ≈0.2 CPU-s across 64 builds × 4 subscribers —
 > well under any ceiling that would force the O4 sharding; exact CPU figure is
-> host-dependent). **F-INT is freezable.**
+> host-dependent). **F-INT is frozen (signed off 2026-06-08).**
 
 ---
 
@@ -364,22 +364,19 @@ Workstream D:  D1+D2 (now, behind unstable) ──► D3.1(Nix sign-off)+D3.2(in
 
 ## Readiness checklists (copy-paste gates)
 
-**Freeze F-INT (Phase 3 internal interface):** ✅ **all engineering gates met —
-assessed freezable; awaiting the maintainer's freeze decision.**
+**Freeze F-INT (Phase 3 internal interface):** ✅ **SIGNED OFF (2026-06-08) —
+frozen.** All engineering gates met and the freeze decision is recorded.
 - [x] A1, A2, A3 built; A-dedup, A-replay, A-backpressure, A-sockauth, A-crash,
   A-spawn all green; A-throughput measured and within the provisional ceiling
   (no escalation needed). *(Workstream A prototype, `make check`.)*
-- [ ] **Freeze sign-off by the libstore/daemon maintainer.** This is the one
-  remaining F-INT action and it is **not** a coding task: the evidence above
-  discharges every *engineering* precondition (the §3 child↔coordinator control
-  protocol, registry, replay/refcount semantics are all validated), so this
-  record **assesses F-INT freezable** — but the actual decision to freeze the
-  internal interface belongs to the libstore/daemon maintainer, not to this
-  validation pass. The reviewable package for that decision — the exact frozen
-  surface, the invariants mapped to in-tree code, the per-gate evidence, the
-  explicit non-asks, and the residual risks — is the
-  [F-INT sign-off dossier](./remote-build-protocol-redesign.f-int-signoff.md).
-  Nothing further is owed from a coding session.
+- [x] **Freeze sign-off by the libstore/daemon maintainer (2026-06-08).** Granted
+  by the RFC owner acting in that role for this branch, on the engineering
+  evidence above and the bounded-stakes reasoning (the interface is below the
+  client wire, so the freeze is a revisible internal contract). The decision is
+  recorded in the
+  [F-INT sign-off dossier](./remote-build-protocol-redesign.f-int-signoff.md) §0,
+  which also packages the frozen surface, the invariants mapped to in-tree code,
+  the per-gate evidence, the explicit non-asks, and the residual risks.
 
 **Freeze F-WIRE (Phase 3 public Build Session surface):** ⏳ Nix-side cleared;
 the serve-side fields (**H3**) are deferred until the Phase 3 design settles —
