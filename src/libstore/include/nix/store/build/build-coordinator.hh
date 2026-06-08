@@ -20,8 +20,10 @@
 /// `TunnelLogger`), so there is no flag day.
 
 #include <string>
+#include <vector>
 
 #include "nix/store/build-result.hh"
+#include "nix/store/build/build-registry.hh"
 #include "nix/store/derivations.hh"
 #include "nix/store/path.hh"
 #include "nix/store/store-api.hh"
@@ -63,5 +65,15 @@ BuildResult relayBuildToCoordinator(
  * `storeUri` is the store builds run against.
  */
 [[noreturn]] void runBuildCoordinator(const std::string & socketPath, const std::string & storeUri);
+
+/**
+ * Read-only introspection: ask the coordinator fronting `store` for its
+ * in-flight builds. Connects to an *existing* coordinator at `store`'s socket —
+ * it does **not** spawn one, so when no coordinator is running there are simply
+ * no active builds and the result is empty. The snapshot is the coordinator's
+ * authorization-filtered view (`BuildRegistry::queryActive`); on the local
+ * peer-cred socket that is "builds this uid may observe".
+ */
+std::vector<ActiveBuildStatus> queryActiveBuildsViaCoordinator(Store & store);
 
 } // namespace nix

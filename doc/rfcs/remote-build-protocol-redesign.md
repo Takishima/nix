@@ -1392,7 +1392,17 @@ the log fixes.
   `libcmd/installables.cc`, `store-api`, `tests/functional/`.
 
 * **Phase 5 — Introspection.** `QueryActiveBuilds` + a `nix` subcommand to
-  render it; authorisation per §6. Delivers **G5**.
+  render it; authorisation per §6. Delivers **G5**. *Landed for the stock-daemon
+  coordinator:* a read-only `queryActive` on the registry interface, a
+  `QUERY_ACTIVE` op on the coordinator control protocol, and `nix store
+  active-builds` (text + `--json`) that reads the coordinator's
+  authorization-filtered snapshot. Gated behind the `build-coordinator`
+  experimental feature, like the rest of the coordinator. The
+  *over-the-wire* query (a worker/serve op so a client can introspect a
+  **remote** builder) rides the deferred wire set (Blocker 3 / H3) and is not
+  part of this slice.
+  *Touches:* `build/build-registry.{hh,cc}`, `build/build-coordinator.{hh,cc}`,
+  `nix/store-active-builds.cc`.
 
 * **Phase 6 — Elastic-backend friendliness.** Let a builder advertise
   self-scheduling / elastic capacity so the hook does not gate on local

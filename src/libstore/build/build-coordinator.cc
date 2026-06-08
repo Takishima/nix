@@ -34,9 +34,13 @@ namespace {
 
 // child → coordinator
 constexpr char MSG_START_OR_ATTACH = 'S';
+// child → coordinator: read-only introspection, answered with one MSG_ACTIVE.
+constexpr char MSG_QUERY_ACTIVE = 'Q';
 // coordinator → child (or build-child → coordinator on the build pipe)
 constexpr char MSG_FRAME = 'F';
 constexpr char MSG_RESULT = 'R';
+// coordinator → child: the QUERY_ACTIVE answer (a JSON array of active builds).
+constexpr char MSG_ACTIVE = 'A';
 
 /** Read exactly `n` bytes, EINTR-aware (so a daemon interrupt — client HUP —
  *  surfaces via checkInterrupt). Returns false on clean EOF. */
@@ -105,6 +109,39 @@ std::string resultRecord(const BuildResult & res)
     std::string body;
     body.push_back(MSG_RESULT);
     body += nlohmann::json(res).dump();
+    return body;
+}
+
+nlohmann::json activeBuildToJSON(const ActiveBuildStatus & s)
+{
+    return {
+        {"resolvedDrv", s.key.resolvedDrv},
+        {"startTime", s.startTime},
+        {"subscribers", s.subscriberCount},
+        {"logBytes", s.logBytes},
+        {"rooted", s.rooted},
+    };
+}
+
+ActiveBuildStatus activeBuildFromJSON(const nlohmann::json & j)
+{
+    ActiveBuildStatus s;
+    s.key.resolvedDrv = j.at("resolvedDrv").get<std::string>();
+    s.startTime = j.at("startTime").get<time_t>();
+    s.subscriberCount = j.at("subscribers").get<size_t>();
+    s.logBytes = j.at("logBytes").get<uint64_t>();
+    s.rooted = j.at("rooted").get<bool>();
+    return s;
+}
+
+std::string activeRecord(const std::vector<ActiveBuildStatus> & builds)
+{
+    auto arr = nlohmann::json::array();
+    for (const auto & b : builds)
+        arr.push_back(activeBuildToJSON(b));
+    std::string body;
+    body.push_back(MSG_ACTIVE);
+    body += arr.dump();
     return body;
 }
 
@@ -351,6 +388,17 @@ struct Coordinator
             startBuild(key, drvPath, drv, (BuildMode) buildMode);
     }
 
+    void handleQueryActive(int connFd)
+    {
+        // peer-cred at accept established the caller's identity; the registry
+        // filters to builds it may observe (AllowAll under the single-user gate).
+        BuildAuth auth{.identity = std::to_string(geteuid()), .trusted = true};
+        try {
+            writeRecord(connFd, activeRecord(registry->queryActive(auth)));
+        } catch (...) {
+        }
+    }
+
     /** Registry asked us to cancel `key`'s build (refcount 0, no root). */
     void onCancel(const BuildRegistryKey & key)
     {
@@ -399,7 +447,19 @@ struct Coordinator
         auto & conn = conns.at(connFd);
         if (!conn.started) {
             auto rec = readRecord(connFd);
-            if (!rec || rec->empty() || (*rec)[0] != MSG_START_OR_ATTACH) {
+            if (!rec || rec->empty()) {
+                dropConn(connFd);
+                return;
+            }
+            char tag = (*rec)[0];
+            if (tag == MSG_QUERY_ACTIVE) {
+                // A query connection never becomes a subscriber, so it takes no
+                // refcount: answer and close.
+                handleQueryActive(connFd);
+                conn.done = true;
+                return;
+            }
+            if (tag != MSG_START_OR_ATTACH) {
                 dropConn(connFd);
                 return;
             }
@@ -597,6 +657,36 @@ BuildResult relayBuildToCoordinator(
             return nlohmann::json::parse(rec->substr(1)).get<BuildResult>();
         }
     }
+}
+
+std::vector<ActiveBuildStatus> queryActiveBuildsViaCoordinator(Store & store)
+{
+    auto socketPath = coordinatorSocketPath(store);
+
+    // Connect to an *existing* coordinator only — never spawn one for a query.
+    // If nothing is listening (no coordinator up, or it idle-exited), there is
+    // nothing in flight: report an empty list rather than an error.
+    AutoCloseFD fd;
+    try {
+        fd = nix::connect(socketPath);
+    } catch (SysError &) {
+        return {};
+    }
+
+    {
+        std::string body;
+        body.push_back(MSG_QUERY_ACTIVE);
+        writeRecord(fd.get(), body);
+    }
+
+    auto rec = readRecord(fd.get());
+    if (!rec || rec->empty() || (*rec)[0] != MSG_ACTIVE)
+        throw Error("build coordinator at '%s' gave no active-builds answer", socketPath);
+
+    std::vector<ActiveBuildStatus> out;
+    for (const auto & j : nlohmann::json::parse(rec->substr(1)))
+        out.push_back(activeBuildFromJSON(j));
+    return out;
 }
 
 void runBuildCoordinator(const std::string & socketPath, const std::string & storeUri)

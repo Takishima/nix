@@ -147,6 +147,7 @@ suites = [
       'build-dedup-coordinator.sh',
       'build-dedup-cancel.sh',
       'build-dedup-toplevel.sh',
+      'build-active-builds.sh',
       'store-split-log.sh',
       'post-hook.sh',
       'function-trace.sh',
