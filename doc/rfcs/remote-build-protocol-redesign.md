@@ -14,7 +14,7 @@
 
 ## 0. Document set
 
-This RFC is the canonical document. Four companions hold detail that would
+This RFC is the canonical document. Five companions hold detail that would
 otherwise bloat it; each is linked from the relevant section below and is
 kept in sync with this file:
 
@@ -32,6 +32,14 @@ kept in sync with this file:
 * **[Hydra coordination draft](./remote-build-protocol-redesign.hydra-coordination.md)**
   — the ready-to-post opening message for the external Hydra ↔ Nix thread that
   must sign off on the serve diagnostic core (§4.8, §7).
+* **[Bazel REAPI assessment](./remote-build-protocol-redesign.bazel-reapi.md)**
+  — whether this design lets us support the Bazel Remote APIs
+  (<https://github.com/bazelbuild/remote-apis>): the semantic mapping
+  (resolved-drv key ↔ `action_digest`, `startOrAttach` ↔ in-flight merge,
+  re-attach ↔ `WaitExecution`, registry interface ↔ §4.3.4 backend), and the
+  additive, off-the-frozen-wire work it would take (gRPC transport, NAR↔CAS
+  bridge, `Derivation`↔`Action` translation, the reserved §4.4 failure-class
+  fields).
 
 Two earlier review-cycle documents and an open-item tracker have been
 **retired** after their content was folded in: the RFC review and the spike
