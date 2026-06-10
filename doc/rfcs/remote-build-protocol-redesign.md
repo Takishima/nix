@@ -853,10 +853,21 @@ Extend `BuildResult` (and its serialisers) with, all optional/back-compat:
   > `src/libstore-tests`. They ride the **deferred** set (alongside
   > `builderId`/`deduplicated`), so they stay behind the unstable serve version
   > and the worker `build-log-query` feature until the freeze (Blocker 3 / §7).
-  > The *consumers* — a backend that classifies its own OOM/eviction failures,
-  > and the durable-reuse layer that must not cache a transient one — are part of
-  > the still-deferred elastic-backend work; the legacy `TransientFailure` status
+  > The legacy `TransientFailure` status
   > stays for back-compat but is now subsumed by the structured `failureClass`.
+  >
+  > **Landed (first producer + the no-reuse invariant):** the stock builder
+  > now classifies a SIGKILL death (the kernel OOM killer's signature; exit
+  > code 137 via an intervening shell) as `ResourceExhausted` with a
+  > resource hint, where it sets the rest of the diagnostic core
+  > (`derivation-building-goal.cc`); everything else stays `BuildError`. The
+  > no-reuse invariant is now stated on `BuildRegistry::finish` and pinned by
+  > a regression test (a transient failure is delivered only to subscribers
+  > of that execution; a later arrival gets a fresh build, never the stale
+  > failure) — v1 retains no results, so the invariant is structural, and the
+  > contract binds any future durable-reuse implementation (§4.3.5). Richer
+  > classification (eviction notices, structured peak-memory measurement)
+  > stays with the deferred elastic-backend work.
 
 Crucially, the builder must **persist** the build log
 (`LogStore::addBuildLog`, `local-store.cc:1629`) instead of discarding it.

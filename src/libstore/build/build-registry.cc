@@ -227,6 +227,9 @@ public:
                 sub.resultSink(r);
             }
         }
+        // Unconditional drop: the result — in particular a transient failure,
+        // which is not a property of the derivation — is never kept as a
+        // canonical answer for the key; a later arrival starts a fresh build.
         drop(*build);
     }
 
