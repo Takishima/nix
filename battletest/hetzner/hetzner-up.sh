@@ -57,7 +57,10 @@ for ip in $(kubectl get nodes \
         out=$(k3s ctr images import /tmp/bt.tar)
         src=$(echo "$out" | grep -oE "docker.io/library/nix:[^ ]+" | head -1)
         [ -n "$src" ] && k3s ctr images tag --force "$src" docker.io/library/'"$IMAGE_TAG"'
-        rm -f /tmp/bt.tar'
+        rm -f /tmp/bt.tar
+        # stock upstream builder image (manifests use a local tag)
+        k3s ctr images pull docker.io/nixos/nix:latest
+        k3s ctr images tag --force docker.io/nixos/nix:latest docker.io/library/battletest-stock:dev'
 done
 
 # ---------------------------------------------------------------------------

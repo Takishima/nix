@@ -48,6 +48,9 @@ fi
 # 1. Build the container image from THIS branch's nix (flake output wraps
 #    docker.nix; it already contains nix + sshd + bash + coreutils).
 # ---------------------------------------------------------------------------
+# NOTE: any change to the working tree (even harness-only commits) changes the
+# embedded version suffix and triggers a full nix rebuild. When iterating on
+# the harness with an already-loaded image, set SKIP_IMAGE_BUILD=1.
 if [ -z "${SKIP_IMAGE_BUILD:-}" ]; then
     log "building .#dockerImage from the branch (cached after first run)"
     nix build ../#dockerImage --out-link "$STATE/dockerimage" \
@@ -58,7 +61,11 @@ if [ -z "${SKIP_IMAGE_BUILD:-}" ]; then
     src_tag=${loaded##* }
     docker tag "$src_tag" "$IMAGE_TAG"
 fi
-docker pull -q nixos/nix:latest || log "WARNING: could not pull nixos/nix (stock builder may not start)"
+# Flatten the multi-arch upstream image to a local single-platform tag;
+# `kind load` chokes on multi-platform manifests under the containerd
+# snapshotter ("content digest ... not found").
+docker build -q -t battletest-stock:dev - <<<'FROM nixos/nix:latest' \
+    || log "WARNING: could not build stock image (stock builder may not start)"
 
 # ---------------------------------------------------------------------------
 # 2. Cluster.
@@ -73,15 +80,22 @@ kubectl config use-context "kind-$CLUSTER" >/dev/null
 
 log "loading images into the cluster"
 kind load docker-image --name "$CLUSTER" "$IMAGE_TAG"
-kind load docker-image --name "$CLUSTER" nixos/nix:latest || true
+kind load docker-image --name "$CLUSTER" battletest-stock:dev || true
 
 # ---------------------------------------------------------------------------
 # 3. Keys, config, workloads.
 # ---------------------------------------------------------------------------
 if [ ! -f "$STATE/id_ed25519" ]; then
     log "generating ssh keys"
-    ssh-keygen -q -t ed25519 -N '' -C battletest-client -f "$STATE/id_ed25519"
-    ssh-keygen -q -t ed25519 -N '' -C battletest-host -f "$STATE/host_key"
+    if command -v ssh-keygen >/dev/null; then
+        ssh-keygen -q -t ed25519 -N '' -C battletest-client -f "$STATE/id_ed25519"
+        ssh-keygen -q -t ed25519 -N '' -C battletest-host -f "$STATE/host_key"
+    else
+        # host without an ssh client (minimal CI sandbox): use the image's
+        docker run --rm -v "$(pwd)/$STATE:/out" "$IMAGE_TAG" bash -c '
+            ssh-keygen -q -t ed25519 -N "" -C battletest-client -f /out/id_ed25519
+            ssh-keygen -q -t ed25519 -N "" -C battletest-host -f /out/host_key'
+    fi
 fi
 
 kubectl apply -f k8s/namespace.yaml

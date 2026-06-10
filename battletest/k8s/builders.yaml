@@ -118,10 +118,11 @@ spec:
       terminationGracePeriodSeconds: 2
       containers:
         - name: builder
-          # Official upstream image; same docker.nix layout, so the same
-          # entrypoint works.
-          image: nixos/nix:latest
-          imagePullPolicy: IfNotPresent
+          # Official upstream image (flattened to a local single-platform tag
+          # by local-up.sh); same docker.nix layout, so the same entrypoint
+          # works.
+          image: battletest-stock:dev
+          imagePullPolicy: Never
           command: ["/bin/sh", "/conf/entrypoint-builder.sh"]
           ports:
             - containerPort: 22

@@ -186,10 +186,14 @@ test_5() { # dedup + active-builds + refcounted cancellation
     start_dedup_build client-1 "$salt" >/dev/null
     sleep 10
 
-    local active subs
-    active=$(cx builder-0 'nix store active-builds --json 2>/dev/null || nix store active-builds' 30)
+    local active subs=0
+    for i in $(seq 1 15); do
+        active=$(cx builder-0 'nix store active-builds --json 2>/dev/null || nix store active-builds' 30)
+        subs=$(echo "$active" | grep -oE '"subscribers": ?[0-9]+' | grep -oE '[0-9]+$' | sort -rn | head -1)
+        [ "${subs:-0}" -ge 2 ] && break
+        sleep 2
+    done
     echo "$active" > "$ART/t5-active-builds.json"
-    subs=$(echo "$active" | grep -oE '"subscribers": ?[0-9]+' | grep -oE '[0-9]+$' | sort -rn | head -1)
 
     local nbuilds
     nbuilds=$(count_builds builder-0 'bt-slower-star[t]')
