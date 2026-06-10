@@ -926,9 +926,11 @@ The store split already works functionally, so this section is about
   outputs build→eval") so the (already-correct) data movement is at least
   visible. *(Landed — Phase 4: the serve client reuses the same
   `copyDrvsFromEvalStore` choreography as `ssh-ng://`, hoisted to `Store`;
-  the copy is observable through `copyPaths`' standard copy activity. The
-  serve side builds without substitutes, so inputs not valid on the builder
-  are realised there from source.)*
+  the copy is observable through `copyPaths`' standard copy activity.
+  Because the serve side builds without substitutes, the serve client also
+  copies input outputs already realised in the eval store — the
+  `realiseRemote` input-copy half — so only the remainder is built from
+  source on the builder.)*
 * Optionally fold the hook's choreography behind a single entry point —
   conceptually `realiseRemote(evalStore, buildStore, derivedPaths)` — that
   copies the drv closure, opens a Build Session and streams logs (§4.2),
@@ -1442,9 +1444,12 @@ the log fixes.
   eval store (the same choreography `RemoteStore` uses, hoisted to
   `Store::copyDrvsFromEvalStore`) instead of rejecting the combination, so
   `nix-build --store ssh://… --eval-store …` works (`store-split-serve.sh`).
-  The serve side builds without substitutes, so inputs not valid on the
-  builder are realised there from source; copying already-realised input
-  outputs (`realiseRemote(...)`) remains a deferred optimisation.
+  Because the serve side builds without substitutes, the copy includes
+  input outputs already realised in the eval store (the `realiseRemote`
+  input-copy half, via `copyClosure`'s `includeOutputs`); only the
+  remainder is built from source on the builder, with a post-build-hook
+  witness in `store-split-serve.sh` proving the prebuilt input is copied,
+  not rebuilt.
   *Touches:* `legacy-ssh-store.cc`, `build-remote.cc`,
   `libcmd/installables.cc`, `store-api`, `tests/functional/`.
 

@@ -15,8 +15,10 @@ files and their sources) from the eval store to the build store before
 building, exactly as the daemon (`ssh-ng://`) transport already did, and the
 remote realises the build from it.
 
-Note that `nix-store --serve` builds without substitutes, so dependencies
-that are not already valid on the remote side are built there from source.
+Dependencies already realised in the eval store are copied to the build
+store along with the derivations. Note that `nix-store --serve` builds
+without substitutes, so any remaining dependencies are built on the remote
+side from source.
 
 Legacy-SSH stores also gained a filesystem accessor that streams store
 objects as NARs over the connection, so operations that read store contents

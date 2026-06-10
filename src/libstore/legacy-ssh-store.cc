@@ -232,9 +232,9 @@ fun<BuildResult()> LegacySSHStore::buildDerivationAsync(
 void LegacySSHStore::buildPaths(
     const std::vector<DerivedPath> & drvPaths, BuildMode buildMode, std::shared_ptr<Store> evalStore)
 {
-    // The remote realises the inputs itself; `nix-store --serve` disables
-    // substitutes, so inputs not already valid there are built from source.
-    copyDrvsFromEvalStore(drvPaths, evalStore);
+    // `nix-store --serve` disables substitutes, so also copy input outputs
+    // already realised in the eval store; the remote builds the rest.
+    copyDrvsFromEvalStore(drvPaths, evalStore, /*includeOutputs=*/true);
 
     auto conn(connections->get());
 

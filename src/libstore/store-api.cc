@@ -1136,7 +1136,8 @@ void copyClosure(
     copyPaths(srcStore, dstStore, closure, repair, checkSigs, substitute);
 }
 
-void Store::copyDrvsFromEvalStore(const std::vector<DerivedPath> & paths, std::shared_ptr<Store> evalStore)
+void Store::copyDrvsFromEvalStore(
+    const std::vector<DerivedPath> & paths, std::shared_ptr<Store> evalStore, bool includeOutputs)
 {
     if (evalStore && evalStore.get() != this) {
         /* The remote doesn't have a way to access evalStore, so copy
@@ -1152,7 +1153,7 @@ void Store::copyDrvsFromEvalStore(const std::vector<DerivedPath> & paths, std::s
                 },
                 i.raw());
         }
-        copyClosure(*evalStore, *this, drvPaths2);
+        copyClosure(*evalStore, *this, drvPaths2, NoRepair, CheckSigs, NoSubstitute, includeOutputs);
     }
 }
 

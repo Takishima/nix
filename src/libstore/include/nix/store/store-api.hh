@@ -1102,8 +1102,13 @@ protected:
      * of the requested derivations (the `.drv` files and their
      * sources) from `evalStore` into this store, so the remote can
      * read and realise them.
+     *
+     * With `includeOutputs`, any input outputs already valid in
+     * `evalStore` are copied along, for remotes that cannot (or should
+     * not) realise the inputs themselves.
      */
-    void copyDrvsFromEvalStore(const std::vector<DerivedPath> & paths, std::shared_ptr<Store> evalStore);
+    void copyDrvsFromEvalStore(
+        const std::vector<DerivedPath> & paths, std::shared_ptr<Store> evalStore, bool includeOutputs = false);
 };
 
 /**
