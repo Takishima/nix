@@ -78,10 +78,11 @@ stream_one() { # helper: build `slow` with a builders override, assert lines app
             if grep -q bt-slow-line-3 /tmp/st.log; then live=yes; break; fi
             sleep 0.5
         done
-        # wait for the build to finish either way
+        # wait for the build to finish either way ("^error" — benign warnings
+        # contain "error:" mid-line)
         for i in $(seq 1 120); do
             grep -q bt-slow-done /tmp/st.log && break
-            grep -qiE "error" /tmp/st.log && break
+            grep -q "^error" /tmp/st.log && break
             sleep 1
         done
         cp /tmp/st.log /tmp/st-keep.log
@@ -305,23 +306,29 @@ test_6() { # self-scheduled (elastic) builder exceeds maxJobs
 test_7() { # use-ssh-ng-for-remote-builds routes schemeless entries over daemon
     local name="7-ssh-ng-default"
     local mplain='builder-1.builders x86_64-linux /root/.ssh/id_ed25519 4 1'
+    # secondary signal: a nix-daemon process appears on the builder during the
+    # build (/proc cmdline is NUL-separated, so match a single argv element)
     cx client-0 '
-        nohup nix-build /tests/exprs.nix -A slow --argstr salt "$RUN-t7" --no-out-link \
+        rm -f /tmp/t7.log
+        nohup nix-build /tests/exprs.nix -A quick --argstr salt "$RUN-t7" --no-out-link \
             --option use-ssh-ng-for-remote-builds true \
             --builders "'"$mplain"'" > /tmp/t7.log 2>&1 &
         echo started' 30 >/dev/null
     local sawdaemon=0
-    for i in $(seq 1 25); do
+    for i in $(seq 1 20); do
         local c
-        c=$(count_builds builder-1 'nix-daemo[n] --stdio')
-        [ -n "$c" ] && [ "$c" -ge 1 ] && { sawdaemon=1; break; }
+        c=$(count_builds builder-1 'nix-daemo[n]')
+        [ -n "$c" ] && [ "$c" -ge 1 ] && sawdaemon=1
+        cx client-0 'grep -q "bt-quick\|^error" /tmp/t7.log 2>/dev/null' 20 && break
         sleep 2
     done
-    cx client-0 'for i in $(seq 1 90); do grep -q bt-slow-done /tmp/t7.log 2>/dev/null && break; sleep 1; done; tail -3 /tmp/t7.log' 120 > "$ART/t7.log" 2>&1
-    if [ "$sawdaemon" = 1 ]; then
-        record "$name" PASS "schemeless machine entry spawned nix-daemon --stdio on builder"
+    cx client-0 'for i in $(seq 1 60); do grep -qE "bt-quick$|^error" /tmp/t7.log 2>/dev/null && break; sleep 1; done; cat /tmp/t7.log' 90 > "$ART/t7.log" 2>&1
+    # primary assertion: the client copied the result from an ssh-ng:// store,
+    # i.e. the schemeless entry was rewritten to the daemon transport
+    if grep -q "ssh-ng://builder-1.builders" "$ART/t7.log"; then
+        record "$name" PASS "schemeless entry routed over ssh-ng:// (daemon-seen=$sawdaemon)"
     else
-        record "$name" FAIL "no nix-daemon --stdio seen on builder-1 during build"
+        record "$name" FAIL "no ssh-ng:// transport evidence in client output (daemon-seen=$sawdaemon)"
     fi
 }
 
