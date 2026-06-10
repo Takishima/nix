@@ -32,15 +32,8 @@ namespace nix {
 
 namespace {
 
-// child → coordinator
-constexpr char MSG_START_OR_ATTACH = 'S';
-// child → coordinator: read-only introspection, answered with one MSG_ACTIVE.
-constexpr char MSG_QUERY_ACTIVE = 'Q';
-// coordinator → child (or build-child → coordinator on the build pipe)
-constexpr char MSG_FRAME = 'F';
-constexpr char MSG_RESULT = 'R';
-// coordinator → child: the QUERY_ACTIVE answer (a JSON array of active builds).
-constexpr char MSG_ACTIVE = 'A';
+// Record tags live in the header (shared with the unit tests).
+using namespace coordinator_proto;
 
 /** Read exactly `n` bytes, EINTR-aware (so a daemon interrupt — client HUP —
  *  surfaces via checkInterrupt). Returns false on clean EOF. */
@@ -187,10 +180,10 @@ public:
 
     void result(ActivityId, ResultType type, const Fields & fields) override
     {
-        // Build output lines arrive as resBuildLogLine (the same result the
-        // daemon tunnels to the client); forward them as log frames.
+        // Newline-terminated so the relay can split coalesced frames back
+        // into lines.
         if (type == resBuildLogLine && !fields.empty() && fields[0].type == Logger::Field::tString)
-            emit(fields[0].s);
+            emit(fields[0].s + "\n");
     }
 };
 
@@ -644,16 +637,40 @@ BuildResult relayBuildToCoordinator(
     }
 
     // Relay frames to the ambient logger (→ the client) until the result.
+    return processCoordinatorRelayRecords(
+        [&]() { return readRecord(fd.get()); }, logger, store.printStorePath(drvPath));
+}
+
+BuildResult processCoordinatorRelayRecords(
+    const std::function<std::optional<std::string>()> & readRecord, Logger & logger, const std::string & drvPathStr)
+{
+    /* Emit `resBuildLogLine` results (not `log()`): the stderr tunnels forward
+       results unconditionally, while `log()` is dropped at low verbosity —
+       `nix-store --serve` pins `lvlError`, which would eat the whole log. */
+    Activity act(logger, lvlInfo, actBuild, fmt("building '%s'", drvPathStr), Logger::Fields{drvPathStr, "", 1, 1});
+
+    std::string pending;
+    auto emitLines = [&](std::string_view data) {
+        pending.append(data);
+        size_t pos;
+        while ((pos = pending.find('\n')) != std::string::npos) {
+            act.result(resBuildLogLine, pending.substr(0, pos));
+            pending.erase(0, pos + 1);
+        }
+    };
+
     while (true) {
-        auto rec = readRecord(fd.get());
+        auto rec = readRecord();
         if (!rec)
             throw Error("build coordinator closed the connection without a result");
         if (rec->empty())
             continue;
         char tag = (*rec)[0];
         if (tag == MSG_FRAME) {
-            logger.log(lvlInfo, std::string_view(*rec).substr(2));
+            emitLines(std::string_view(*rec).substr(2));
         } else if (tag == MSG_RESULT) {
+            if (!pending.empty())
+                act.result(resBuildLogLine, pending);
             return nlohmann::json::parse(rec->substr(1)).get<BuildResult>();
         }
     }

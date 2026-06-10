@@ -54,6 +54,7 @@ deps_private += gtest
 subdir('nix-meson-build-support/common')
 
 sources = files(
+  'build-coordinator-relay.cc',
   'build-registry.cc',
   'build-result.cc',
   'common-protocol.cc',

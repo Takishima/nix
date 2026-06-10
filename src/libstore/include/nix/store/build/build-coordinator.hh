@@ -19,6 +19,8 @@
 /// ordinary worker-protocol `STDERR_*` to its client via the existing
 /// `TunnelLogger`), so there is no flag day.
 
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -56,6 +58,33 @@ BuildResult relayBuildToCoordinator(
     BuildMode buildMode,
     Logger & logger,
     bool trusted);
+
+/**
+ * Coordinator control-protocol record tags (internal mechanism, never the
+ * public client wire); in the header so the unit tests share them.
+ */
+namespace coordinator_proto {
+/// child → coordinator
+constexpr char MSG_START_OR_ATTACH = 'S';
+/// child → coordinator: read-only introspection, answered with one MSG_ACTIVE.
+constexpr char MSG_QUERY_ACTIVE = 'Q';
+/// coordinator → child (or build-child → coordinator on the build pipe)
+constexpr char MSG_FRAME = 'F';
+constexpr char MSG_RESULT = 'R';
+/// coordinator → child: the QUERY_ACTIVE answer (a JSON array of active builds).
+constexpr char MSG_ACTIVE = 'A';
+} // namespace coordinator_proto
+
+/**
+ * The relay's record → logger pump, factored out of `relayBuildToCoordinator`
+ * so what a relayed build emits into the logger is unit-testable. Drains
+ * records from `readRecord` (one body per call, nullopt = EOF), surfacing
+ * `MSG_FRAME` log frames as `resBuildLogLine` results under an `actBuild`
+ * activity — like a non-relayed build — until `MSG_RESULT`, whose decoded
+ * `BuildResult` is returned.
+ */
+BuildResult processCoordinatorRelayRecords(
+    const std::function<std::optional<std::string>()> & readRecord, Logger & logger, const std::string & drvPathStr);
 
 /**
  * The coordinator main loop: bind `socketPath`, host the in-memory
