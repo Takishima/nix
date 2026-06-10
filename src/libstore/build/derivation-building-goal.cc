@@ -1245,6 +1245,16 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
             Magenta(worker.store.printStorePath(drvPath)),
             statusToString(e.builderStatus));
 
+    /* Surface the §4.4 classification to the user, not only on the wire: it
+       is the difference between "fix the derivation" and "retry with more
+       memory". */
+    if (buildResult.killedForMemory) {
+        msg += "\nThe builder was killed, most likely by the kernel out-of-memory killer: "
+               "this failure is transient, and retrying with more memory may succeed.";
+        if (buildResult.peakMemoryBytes > 0)
+            msg += fmt(" Peak memory use: %s.", renderSize((int64_t) buildResult.peakMemoryBytes));
+    }
+
     msg += showKnownOutputs(worker.store, *drv);
 
     auto & logTail = buildLog.getTail();

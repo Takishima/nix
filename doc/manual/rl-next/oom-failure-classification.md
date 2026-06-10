@@ -8,6 +8,10 @@ build result now carries a structured failure classification
 (`failureClass = ResourceExhausted`, `killedForMemory = true`), distinguishing
 "the machine ran out of memory" from "the build is genuinely broken".
 
+The rendered build error says so too ("killed, most likely by the kernel
+out-of-memory killer", with peak memory use when measured), so the
+classification is visible to users and not only on the wire.
+
 This is the signal a retry layer can key on, independent of the exit code:
 such a failure is not a property of the derivation, so it may be retried
 (for example on a larger machine) and is never reused as a canonical result

@@ -95,4 +95,7 @@ if command -v pgrep > /dev/null; then
     cat "$killedOut" >&2
     grepQuiet "due to signal 9" "$killedOut"
     grepQuietInverse "builder failed with exit code" "$killedOut"
+    # The ResourceExhausted classification must reach the user, not only the
+    # wire: the error explains the likely OOM kill and that a retry may help.
+    grepQuiet "out-of-memory" "$killedOut"
 fi
