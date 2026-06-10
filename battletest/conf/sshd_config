@@ -1,0 +1,16 @@
+# Throw-away sshd config for battletest builder pods.
+Port 22
+HostKey /etc/ssh/ssh_host_ed25519_key
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthorizedKeysFile /root/.ssh/authorized_keys
+# Secret-sourced files have odd ownership in pods; don't fight it.
+StrictModes no
+UsePAM no
+# Non-interactive ssh commands (nix-store --serve / nix-daemon --stdio) must
+# find the nix tools without a login shell. The entrypoint also symlinks them
+# into /usr/bin as a fallback.
+SetEnv PATH=/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/nix/var/nix/profiles/default/sbin:/usr/bin:/bin
+PidFile /run/sshd.pid
+Subsystem sftp internal-sftp

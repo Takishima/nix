@@ -1,0 +1,50 @@
+# Two client pods with stable names (client-0, client-1) — the dedup tests
+# need two distinct clients hitting the same builder concurrently.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clients
+  namespace: battletest
+spec:
+  clusterIP: None
+  selector:
+    app: client
+  ports:
+    - name: placeholder
+      port: 1
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: client
+  namespace: battletest
+spec:
+  serviceName: clients
+  replicas: 2
+  selector:
+    matchLabels:
+      app: client
+  template:
+    metadata:
+      labels:
+        app: client
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: client
+          image: battletest-nix:dev
+          imagePullPolicy: Never
+          command: ["/bin/sh", "/conf/entrypoint-client.sh"]
+          volumeMounts:
+            - { name: conf, mountPath: /conf }
+            - { name: ssh, mountPath: /ssh }
+            - { name: tests, mountPath: /tests }
+            - { name: conf, mountPath: /etc/nix/nix.conf, subPath: nix-client.conf }
+            - { name: conf, mountPath: /etc/nix/machines, subPath: machines }
+      volumes:
+        - name: conf
+          configMap: { name: battletest-conf }
+        - name: ssh
+          secret: { secretName: battletest-ssh }
+        - name: tests
+          configMap: { name: battletest-tests }

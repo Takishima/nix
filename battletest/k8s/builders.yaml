@@ -1,0 +1,140 @@
+# Builders: a headless service governing all builder StatefulSets, so every
+# builder pod gets a stable DNS name <pod>.builders:
+#   builder-0.builders, builder-1.builders        (branch nix)
+#   builder-oom-0.builders                        (branch nix, low memory limit)
+#   builder-stock-0.builders                      (stock upstream nix, negative control)
+apiVersion: v1
+kind: Service
+metadata:
+  name: builders
+  namespace: battletest
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    battletest/ssh-builder: "true"
+  ports:
+    - name: ssh
+      port: 22
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: builder
+  namespace: battletest
+spec:
+  serviceName: builders
+  replicas: 2
+  selector:
+    matchLabels:
+      app: builder
+  template:
+    metadata:
+      labels:
+        app: builder
+        battletest/ssh-builder: "true"
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: builder
+          image: battletest-nix:dev
+          imagePullPolicy: Never
+          command: ["/bin/sh", "/conf/entrypoint-builder.sh"]
+          ports:
+            - containerPort: 22
+          readinessProbe:
+            tcpSocket:
+              port: 22
+            periodSeconds: 2
+          volumeMounts:
+            - { name: conf, mountPath: /conf }
+            - { name: ssh, mountPath: /ssh }
+            - { name: conf, mountPath: /etc/nix/nix.conf, subPath: nix-builder.conf }
+      volumes:
+        - name: conf
+          configMap: { name: battletest-conf }
+        - name: ssh
+          secret: { secretName: battletest-ssh }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: builder-oom
+  namespace: battletest
+spec:
+  serviceName: builders
+  replicas: 1
+  selector:
+    matchLabels:
+      app: builder-oom
+  template:
+    metadata:
+      labels:
+        app: builder-oom
+        battletest/ssh-builder: "true"
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: builder
+          image: battletest-nix:dev
+          imagePullPolicy: Never
+          command: ["/bin/sh", "/conf/entrypoint-builder.sh"]
+          resources:
+            limits:
+              memory: 256Mi
+          ports:
+            - containerPort: 22
+          readinessProbe:
+            tcpSocket:
+              port: 22
+            periodSeconds: 2
+          volumeMounts:
+            - { name: conf, mountPath: /conf }
+            - { name: ssh, mountPath: /ssh }
+            - { name: conf, mountPath: /etc/nix/nix.conf, subPath: nix-builder.conf }
+      volumes:
+        - name: conf
+          configMap: { name: battletest-conf }
+        - name: ssh
+          secret: { secretName: battletest-ssh }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: builder-stock
+  namespace: battletest
+spec:
+  serviceName: builders
+  replicas: 1
+  selector:
+    matchLabels:
+      app: builder-stock
+  template:
+    metadata:
+      labels:
+        app: builder-stock
+        battletest/ssh-builder: "true"
+    spec:
+      terminationGracePeriodSeconds: 2
+      containers:
+        - name: builder
+          # Official upstream image; same docker.nix layout, so the same
+          # entrypoint works.
+          image: nixos/nix:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/conf/entrypoint-builder.sh"]
+          ports:
+            - containerPort: 22
+          readinessProbe:
+            tcpSocket:
+              port: 22
+            periodSeconds: 2
+          volumeMounts:
+            - { name: conf, mountPath: /conf }
+            - { name: ssh, mountPath: /ssh }
+            - { name: conf, mountPath: /etc/nix/nix.conf, subPath: nix-stock.conf }
+      volumes:
+        - name: conf
+          configMap: { name: battletest-conf }
+        - name: ssh
+          secret: { secretName: battletest-ssh }

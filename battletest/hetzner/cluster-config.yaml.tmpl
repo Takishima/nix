@@ -1,0 +1,32 @@
+# hetzner-k3s cluster config template; hetzner-up.sh substitutes ${HCLOUD_TOKEN}
+# and writes the result to battletest/.state/hetzner-cluster.yaml.
+# 1 control plane + 2 workers, all cx32 (4 vCPU / 8 GB, x86_64).
+# TODO (stretch): add an ARM worker pool (cax21) for a multi-arch builder.
+hetzner_token: "${HCLOUD_TOKEN}"
+cluster_name: nix-battletest
+kubeconfig_path: "../.state/kubeconfig-hetzner"
+k3s_version: "v1.31.5+k3s1"
+
+networking:
+  ssh:
+    port: 22
+    use_agent: false
+    public_key_path: "../.state/hetzner_ssh.pub"
+    private_key_path: "../.state/hetzner_ssh"
+  allowed_networks:
+    ssh:
+      - 0.0.0.0/0
+    api:
+      - 0.0.0.0/0
+
+masters_pool:
+  instance_type: cx32
+  instance_count: 1
+  locations:
+    - nbg1
+
+worker_node_pools:
+  - name: workers
+    instance_type: cx32
+    instance_count: 2
+    location: nbg1
