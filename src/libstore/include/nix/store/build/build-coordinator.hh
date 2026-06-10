@@ -20,10 +20,12 @@
 /// `TunnelLogger`), so there is no flag day.
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "nix/util/file-descriptor.hh"
 #include "nix/store/build-result.hh"
 #include "nix/store/build/build-registry.hh"
 #include "nix/store/derivations.hh"
@@ -52,6 +54,61 @@ class Logger;
  * if set, else `$stateDir/coordinator.socket`.
  */
 BuildResult relayBuildToCoordinator(
+    Store & store,
+    const StorePath & drvPath,
+    const BasicDerivation & drv,
+    BuildMode buildMode,
+    Logger & logger,
+    bool trusted);
+
+/**
+ * The relay's incremental byte → record → logger pump: feed it whatever bytes
+ * arrive from the coordinator control socket (any framing split), and it
+ * surfaces complete `MSG_FRAME` log frames as `resBuildLogLine` results under
+ * an `actBuild` activity — like a non-relayed build — until the `MSG_RESULT`
+ * record completes, whose decoded `BuildResult` is returned. This is the
+ * non-blocking core shared by the blocking `relayBuildToCoordinator` and the
+ * event-loop `CoordinatorRelaySession`.
+ */
+class CoordinatorRelayPump
+{
+public:
+    CoordinatorRelayPump(Logger & logger, const std::string & drvPathStr);
+    ~CoordinatorRelayPump();
+    CoordinatorRelayPump(CoordinatorRelayPump &&) noexcept;
+
+    /**
+     * Feed raw control-socket bytes. Returns the final `BuildResult` once the
+     * result record has been fully received.
+     */
+    std::optional<BuildResult> feed(std::string_view data);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl;
+};
+
+/**
+ * An in-flight relay subscription, for callers that drive it from their own
+ * event loop instead of blocking in `relayBuildToCoordinator` (which would
+ * serialise a multi-goal `Worker`): watch `socket` for readability and `feed`
+ * the pump whatever is read until it yields the `BuildResult`. EOF before a
+ * result means the coordinator died. Dropping the session closes the socket,
+ * which the coordinator treats as a refcounted unsubscribe.
+ */
+struct CoordinatorRelaySession
+{
+    AutoCloseFD socket;
+    CoordinatorRelayPump pump;
+};
+
+/**
+ * Connect to `store`'s coordinator (lazily spawning it) and subscribe to the
+ * build of `drvPath`/`drv` (`START_OR_ATTACH`), returning the in-flight
+ * session. The arguments are those of `relayBuildToCoordinator`, which is
+ * equivalent to draining the returned session with blocking reads.
+ */
+CoordinatorRelaySession startCoordinatorRelay(
     Store & store,
     const StorePath & drvPath,
     const BasicDerivation & drv,

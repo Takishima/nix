@@ -453,14 +453,49 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
        build child) is the recursion guard that stops that child relaying back.
        We only intercept builds that would otherwise run *locally* on this store:
        a hook-offloaded build keeps going to the hook, so the coordinator dedups
-       the store that runs the build, not the one offloading it. The relay blocks
-       this goal until the shared build finishes — correct, but it serialises a
-       multi-build Worker (a follow-up can make it event-loop-driven). */
+       the store that runs the build, not the one offloading it.
+
+       The relay is event-loop-driven: the control socket is registered as this
+       goal's child fd and the goal suspends between records, so other goals of
+       a multi-build Worker keep running while the shared build is in flight.
+       It takes no build slot (the build occupies the coordinator's resources,
+       not this worker's), and no worker timeout: silent-time/deadline handling
+       for a *shared* build belongs to the registry (per-subscriber deadlines),
+       not to any one subscriber's worker. */
     if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator) && buildMode == bmNormal
         && std::holds_alternative<LocalBuildCapability>(localBuildResult)
         && getEnv("NIX_BUILD_COORDINATOR_INNER").value_or("").empty()
         && dynamic_cast<LocalStore *>(&worker.store)) {
-        buildResult = relayBuildToCoordinator(worker.store, drvPath, *drv, buildMode, *logger, /*trusted=*/true);
+        {
+            auto relay = startCoordinatorRelay(worker.store, drvPath, *drv, buildMode, *logger, /*trusted=*/true);
+            worker.childStarted(
+                shared_from_this(), {relay.socket.get()}, /*inBuildSlot=*/false, /*respectTimeouts=*/false);
+
+            std::optional<BuildResult> relayed;
+            while (!relayed) {
+                auto event = co_await WaitForChildEvent{};
+                if (auto * output = std::get_if<ChildOutput>(&event)) {
+                    try {
+                        relayed = relay.pump.feed(output->data);
+                    } catch (...) {
+                        // Unregister before the socket is closed by unwinding.
+                        worker.childTerminated(this);
+                        throw;
+                    }
+                } else if (std::get_if<ChildEOF>(&event)) {
+                    worker.childTerminated(this);
+                    co_return doneFailure(BuildError(
+                        BuildResult::Failure::MiscFailure,
+                        "build coordinator closed the connection without a result for '%s'",
+                        worker.store.printStorePath(drvPath)));
+                } else if (auto * timeout = std::get_if<std::unique_ptr<TimedOut>>(&event)) {
+                    worker.childTerminated(this);
+                    co_return doneFailure(std::move(**timeout));
+                }
+            }
+            worker.childTerminated(this);
+            buildResult = std::move(*relayed);
+        }
         if (auto * fail = buildResult.tryGetFailure())
             co_return doneFailure(*fail);
         auto [allValid, validOutputs] = checkPathValidity(initialOutputs);

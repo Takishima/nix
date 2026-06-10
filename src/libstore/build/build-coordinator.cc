@@ -602,7 +602,84 @@ void spawnCoordinator(const std::string & socketPath, const std::string & storeU
 
 } // namespace
 
-BuildResult relayBuildToCoordinator(
+struct CoordinatorRelayPump::Impl
+{
+    /* Emit `resBuildLogLine` results (not `log()`): the stderr tunnels forward
+       results unconditionally, while `log()` is dropped at low verbosity —
+       `nix-store --serve` pins `lvlError`, which would eat the whole log. */
+    Activity act;
+
+    /** Partially received line (frames may split lines, lines may span frames). */
+    std::string pendingLine;
+
+    /** Partially received length-prefixed record. */
+    std::string pendingRecord;
+
+    Impl(Logger & logger, const std::string & drvPathStr)
+        : act(logger, lvlInfo, actBuild, fmt("building '%s'", drvPathStr), Logger::Fields{drvPathStr, "", 1, 1})
+    {
+    }
+
+    void emitLines(std::string_view data)
+    {
+        pendingLine.append(data);
+        size_t pos;
+        while ((pos = pendingLine.find('\n')) != std::string::npos) {
+            act.result(resBuildLogLine, pendingLine.substr(0, pos));
+            pendingLine.erase(0, pos + 1);
+        }
+    }
+
+    std::optional<BuildResult> feedRecord(std::string_view body)
+    {
+        if (body.empty())
+            return std::nullopt;
+        char tag = body[0];
+        if (tag == MSG_FRAME) {
+            if (body.size() > 2)
+                emitLines(body.substr(2));
+        } else if (tag == MSG_RESULT) {
+            if (!pendingLine.empty())
+                act.result(resBuildLogLine, pendingLine);
+            return nlohmann::json::parse(body.substr(1)).get<BuildResult>();
+        }
+        return std::nullopt;
+    }
+
+    std::optional<BuildResult> feed(std::string_view data)
+    {
+        pendingRecord.append(data);
+        while (true) {
+            if (pendingRecord.size() < 4)
+                return std::nullopt;
+            uint32_t len;
+            memcpy(&len, pendingRecord.data(), 4);
+            if (len > maxRecordLen)
+                throw Error("coordinator control record too large (%d bytes)", len);
+            if (pendingRecord.size() < 4 + (size_t) len)
+                return std::nullopt;
+            auto res = feedRecord(std::string_view(pendingRecord).substr(4, len));
+            pendingRecord.erase(0, 4 + (size_t) len);
+            if (res)
+                return res;
+        }
+    }
+};
+
+CoordinatorRelayPump::CoordinatorRelayPump(Logger & logger, const std::string & drvPathStr)
+    : impl(std::make_unique<Impl>(logger, drvPathStr))
+{
+}
+
+CoordinatorRelayPump::~CoordinatorRelayPump() = default;
+CoordinatorRelayPump::CoordinatorRelayPump(CoordinatorRelayPump &&) noexcept = default;
+
+std::optional<BuildResult> CoordinatorRelayPump::feed(std::string_view data)
+{
+    return impl->feed(data);
+}
+
+CoordinatorRelaySession startCoordinatorRelay(
     Store & store,
     const StorePath & drvPath,
     const BasicDerivation & drv,
@@ -640,44 +717,57 @@ BuildResult relayBuildToCoordinator(
         writeRecord(fd.get(), body);
     }
 
+    return CoordinatorRelaySession{
+        .socket = std::move(fd),
+        .pump = CoordinatorRelayPump(logger, store.printStorePath(drvPath)),
+    };
+}
+
+BuildResult relayBuildToCoordinator(
+    Store & store,
+    const StorePath & drvPath,
+    const BasicDerivation & drv,
+    BuildMode buildMode,
+    Logger & logger,
+    bool trusted)
+{
+    auto session = startCoordinatorRelay(store, drvPath, drv, buildMode, logger, trusted);
+
     // Relay frames to the ambient logger (→ the client) until the result.
-    return processCoordinatorRelayRecords(
-        [&]() { return readRecord(fd.get()); }, logger, store.printStorePath(drvPath));
+    char buf[8192];
+    while (true) {
+        ssize_t r = ::read(session.socket.get(), buf, sizeof(buf));
+        if (r == 0)
+            throw Error("build coordinator closed the connection without a result");
+        if (r < 0) {
+            if (errno == EINTR) {
+                checkInterrupt();
+                continue;
+            }
+            throw SysError("reading from coordinator control socket");
+        }
+        if (auto res = session.pump.feed(std::string_view(buf, r)))
+            return *res;
+    }
 }
 
 BuildResult processCoordinatorRelayRecords(
     const std::function<std::optional<std::string>()> & readRecord, Logger & logger, const std::string & drvPathStr)
 {
-    /* Emit `resBuildLogLine` results (not `log()`): the stderr tunnels forward
-       results unconditionally, while `log()` is dropped at low verbosity —
-       `nix-store --serve` pins `lvlError`, which would eat the whole log. */
-    Activity act(logger, lvlInfo, actBuild, fmt("building '%s'", drvPathStr), Logger::Fields{drvPathStr, "", 1, 1});
-
-    std::string pending;
-    auto emitLines = [&](std::string_view data) {
-        pending.append(data);
-        size_t pos;
-        while ((pos = pending.find('\n')) != std::string::npos) {
-            act.result(resBuildLogLine, pending.substr(0, pos));
-            pending.erase(0, pos + 1);
-        }
-    };
-
-    while (true) {
-        auto rec = readRecord();
-        if (!rec)
-            throw Error("build coordinator closed the connection without a result");
-        if (rec->empty())
-            continue;
-        char tag = (*rec)[0];
-        if (tag == MSG_FRAME) {
-            emitLines(std::string_view(*rec).substr(2));
-        } else if (tag == MSG_RESULT) {
-            if (!pending.empty())
-                act.result(resBuildLogLine, pending);
-            return nlohmann::json::parse(rec->substr(1)).get<BuildResult>();
-        }
+    CoordinatorRelayPump pump(logger, drvPathStr);
+    while (auto rec = readRecord()) {
+        // Re-frame the body with its length prefix, so the record-level seam
+        // the unit tests drive exercises the same incremental decoder the
+        // event-loop path uses.
+        uint32_t len = (uint32_t) rec->size();
+        std::string framed;
+        framed.resize(4);
+        memcpy(framed.data(), &len, 4);
+        framed.append(*rec);
+        if (auto res = pump.feed(framed))
+            return *res;
     }
+    throw Error("build coordinator closed the connection without a result");
 }
 
 std::vector<ActiveBuildStatus> queryActiveBuildsViaCoordinator(Store & store)

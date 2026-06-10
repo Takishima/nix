@@ -185,6 +185,52 @@ TEST(CoordinatorRelay, framesAreBuildLogLineResults)
     EXPECT_EQ(capture.buildLogLines[0], "a line");
 }
 
+/* The event-loop relay (`CoordinatorRelayPump::feed`) must decode the
+   length-prefixed byte stream incrementally: records arrive in arbitrary
+   splits (a socket read can end mid-length-prefix, mid-record, or carry
+   several records), and the decoded frames/result must be exactly those of
+   the record-at-a-time path. */
+TEST(CoordinatorRelay, incrementalByteFeedDecodesAcrossSplits)
+{
+    // The raw byte stream as the coordinator writes it.
+    auto frameBytes = [](std::string_view body) {
+        uint32_t len = (uint32_t) body.size();
+        std::string s;
+        s.resize(4);
+        memcpy(s.data(), &len, 4);
+        s += body;
+        return s;
+    };
+    std::string wireBytes = frameBytes(frameRec("one\ntwo\n")) + frameBytes(frameRec("three"))
+                            + frameBytes(frameRec("-and-more\n")) + frameBytes(resultRec(successResult()));
+
+    // Feed it in every chunk size from pathological (1 byte) upwards.
+    for (size_t chunk : {(size_t) 1, (size_t) 3, (size_t) 7, wireBytes.size()}) {
+        BufStringSink wire;
+        ServeTunnelLogger tunnel(wire);
+        tunnel.startWork();
+
+        std::optional<BuildResult> res;
+        {
+            CoordinatorRelayPump pump(tunnel, "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-x.drv");
+            for (size_t i = 0; i < wireBytes.size() && !res; i += chunk)
+                res = pump.feed(std::string_view(wireBytes).substr(i, chunk));
+        }
+
+        tunnel.stopWork();
+        wire.flush();
+
+        ASSERT_TRUE(res.has_value()) << "chunk size " << chunk;
+        EXPECT_TRUE(res->tryGetSuccess() != nullptr) << "chunk size " << chunk;
+
+        auto decoded = decodeServeWire(wire.s);
+        ASSERT_EQ(decoded.buildLogLines.size(), 3u) << "chunk size " << chunk;
+        EXPECT_EQ(decoded.buildLogLines[0], "one");
+        EXPECT_EQ(decoded.buildLogLines[1], "two");
+        EXPECT_EQ(decoded.buildLogLines[2], "three-and-more");
+    }
+}
+
 /* `resBuildLogLine` is line-oriented; multi-line frames must be split. */
 TEST(CoordinatorRelay, multiLineFramesAreSplit)
 {
