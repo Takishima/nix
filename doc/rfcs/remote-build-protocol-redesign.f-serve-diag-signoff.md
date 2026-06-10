@@ -115,6 +115,7 @@ The core is exercised by real in-tree consumers, not only the golden model:
 | `tests/functional/ssh-ng-build-log.sh` | `nix log` over `ssh-ng` (worker `QueryBuildLog` / the `getBuildLogExact` gap) |
 | `tests/functional/build-remote-fail-loud.sh` | the `ssh://` build hook's fail-loud render, which consumes `logTail` |
 | `tests/functional/build-remote-serve-log-stream.sh` | live log streaming over the serve path |
+| `tests/functional/build-remote-serve-log-stream-coordinator.sh` | live log streaming over the serve path **when the builder runs the coordinator** — added post-sign-off, see §8 |
 
 These also demonstrate the core is **not Hydra-specific**: the `nix` CLI and the
 `ssh://` build hook are the consumers driving it, which is the basis for the
@@ -174,3 +175,34 @@ of §6: only the genuinely generic, consumer-proven fields freeze; everything
 whose semantics are still in motion stays behind a later unstable version. The
 sign-off being requested is precisely "these four fields and this order are the
 ones we are willing to never change," with the soak as the safety margin.
+
+## 8. Post-sign-off addendum (2026-06-10): a functional gap the fake-SSH evidence missed
+
+The k8s battle test (real OpenSSH between pods; see `battletest/REPORT.md` on
+the `claude/k8s-battletest` branch) found that **serve-path log streaming was
+dropped entirely whenever the builder ran the coordinator**: the relay
+re-emitted the build's log frames as `log(lvlInfo)`, and `nix-store --serve`
+pins `verbosity = lvlError`, so the serve stderr tunnel discarded every line —
+a serve `2.9` client got no build log at all, live or at completion. The §4
+evidence row `build-remote-serve-log-stream.sh` only ever exercised the
+coordinator-*less* serve build, so the fake-SSH suite that informed `D3.2`
+never covered the `serve-build-logs` × `build-coordinator` combination.
+
+**Fix:** `5ebfb905` (*libstore: surface coordinator-relayed build logs as
+results*) — relayed frames are now emitted as `resBuildLogLine` results under
+an `actBuild` activity, like a non-relayed build, which the serve/daemon
+tunnels forward unconditionally. **Regression tests, written first:** the
+`CoordinatorRelay.*` unit tests (`src/libstore-tests/build-coordinator-relay.cc`,
+driving the full serve wire path through the factored-out record pump) and
+`tests/functional/build-remote-serve-log-stream-coordinator.sh` (now in the §4
+table). The k8s matrix re-ran 10/10 PASS against the fixed branch.
+
+**Impact on the decision:** none on the layout. The bug was in log *delivery*
+on the builder side, not in the frozen field set, byte order, or version
+mechanics — no `2.9` bytes changed — so `D3.1` stands and the `D3.4` soak
+clock (started 2026-06-08) does **not** restart. What it corrects is the
+*evidence* record: `D3.2`'s "in-tree consumers exercise the core" claim was
+true only for the coordinator-less path, and the table above now carries the
+test that closes that hole. (The battle test found a second gap, in the
+coordinator's cancel-at-zero path; that one bears on F-INT and is recorded in
+[its dossier's §8](./remote-build-protocol-redesign.f-int-signoff.md).)

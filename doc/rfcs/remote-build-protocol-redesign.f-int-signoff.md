@@ -92,6 +92,7 @@ public Build Session wire (F-WIRE), the serve diagnostic core / version bump
 |---|---|
 | `build-dedup-coordinator.sh` | dedup + replay + fan-out: two clients, one real build (same builder-process token), the late joiner receives the pre-attach log via replay (I1, I8, I9) |
 | `build-dedup-cancel.sh` | refcounted cancel: the originator is killed, the joiner still completes — the build is not cancelled while another subscriber wants it (I4, I5) |
+| `build-dedup-cancel-last.sh` | the terminal half of I4: when the **last** subscriber detaches with no durable root, the build child actually dies — added post-sign-off, see §8 |
 | `build-dedup-toplevel.sh` | top-level builds dedup via the goal, not only the hook path |
 | `build-active-builds.sh` | `queryActive` introspection: the in-flight build is listed while held, empty after completion (I3 filtering, the `QUERY_ACTIVE` op) |
 
@@ -163,3 +164,40 @@ compatibility event. The sign-off being requested is therefore "this interface
 is sound enough to build Phase 3 implementation on," not an irrevocable
 commitment — which is exactly why the engineering evidence in §4, not a
 multi-release soak, is the appropriate bar for it.
+
+## 8. Post-sign-off addendum (2026-06-10): a functional gap the fake-SSH evidence missed
+
+The k8s battle test (real OpenSSH between pods; see `battletest/REPORT.md` on
+the `claude/k8s-battletest` branch) found that **cancel-at-zero never killed
+the build**: when the last subscriber detached with no durable root, the
+registry correctly dropped the entry and fired `onCancel`, and the coordinator
+SIGINT'd its build child — but the child, forked from a libmain process,
+inherited a signal mask that blocks SIGINT (it is normally handled by a
+dedicated thread that does not survive `fork`), so the signal was never acted
+on and the build ran to completion and registered its output. The §4 evidence
+for I4 (`build-dedup-cancel.sh`) only proves the *complementary* half — a
+detach with subscribers remaining must **not** cancel — so the fake-SSH suite
+that informed this sign-off never exercised the refcount-reaches-zero kill
+path at all.
+
+**Fix:** `235dda79` (*libstore: make coordinator cancellation actually stop
+the build*) — the forked build child re-arms signal handling so SIGINT
+interrupts the worker and tears the build down. **Regression test, written
+first:** `tests/functional/build-dedup-cancel-last.sh` (now in the §4 table).
+The k8s matrix re-ran 10/10 PASS against the fixed branch, including the
+previously failing `5b-refcount-cancel` case.
+
+**Impact on the decision:** the *interface* stands. Invariant I4's wording —
+"the build is cancelled (its `onCancel` fires) only at refcount 0 with no
+durable root" — was the right contract; the v1 coordinator's *implementation*
+of the kill behind `onCancel` was broken. That is exactly the §7
+bounded-stakes case (an internal implementation fix, no interface or wire
+change), so the F-INT freeze is unaffected. The corrective lesson is for the
+*evidence bar*: invariants with two halves (must-cancel / must-not-cancel)
+need a test per half, and the registry's view (`queryActive` emptying) is not
+proof the underlying process died. (The battle test found a second gap, in
+serve-path log delivery through the coordinator relay; that one bears on
+F-SERVE-DIAG and is recorded in
+[its dossier's §8](./remote-build-protocol-redesign.f-serve-diag-signoff.md),
+with relay-level unit coverage in
+`src/libstore-tests/build-coordinator-relay.cc`.)
