@@ -224,18 +224,19 @@ std::string coordinatorSocketPath(Store & store)
     return (settings.nixStateDir / "coordinator.socket").string();
 }
 
-/** Verify the connecting peer is the same uid as us — the pluggable-auth
- *  seam; peer-cred here, mTLS/identity in a network control plane. */
-bool peerIsSameUid(int fd)
+/** The connecting peer's authenticated identity (its uid via peer-cred) — the
+ *  pluggable-auth seam; peer-cred here, mTLS/identity in a network control
+ *  plane. `nullopt` when it cannot be established. */
+std::optional<uid_t> getPeerUid(int fd)
 {
 #ifdef SO_PEERCRED
     struct ucred cred;
     socklen_t len = sizeof(cred);
     if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0)
-        return false;
-    return cred.uid == geteuid();
+        return std::nullopt;
+    return cred.uid;
 #else
-    return true; // best-effort on non-Linux for this slice
+    return geteuid(); // best-effort on non-Linux for this slice
 #endif
 }
 
@@ -244,7 +245,13 @@ struct Coordinator
     std::string socketPath;
     std::string storeUri;
     ref<Store> parseStore; // for parsing drvs/paths (parent never builds)
-    AllowAllAuthPolicy policy;
+
+    /** The registry enforces the single-user gate itself (only the
+     *  coordinator's own identity may build/attach/observe), not only the
+     *  transport: if the same-uid `accept` check is ever widened ahead of a
+     *  real multi-tenant policy, the registry fails closed. */
+    SingleIdentityAuthPolicy policy{std::to_string(geteuid())};
+
     std::unique_ptr<BuildRegistry> registry = makeInMemoryBuildRegistry(policy);
 
     /** A connected daemon child = one subscription. */
@@ -255,6 +262,8 @@ struct Coordinator
         bool done = false;    // result delivered; close after flush
         SubscriptionId sub;
         BuildRegistryKey key;
+        /** The peer's authenticated identity (uid via peer-cred at accept). */
+        std::string identity;
     };
 
     /** A running build = the registry MISS that started it. */
@@ -337,17 +346,23 @@ struct Coordinator
         uint64_t buildMode, trusted, replayWanted;
         src >> buildMode >> trusted >> replayWanted;
 
-        // The key is the resolved-drv path the child sent. For untrusted clients
-        // the daemon already recomputed it from the drv (daemon.cc, the CA
-        // `writeDerivation` path) before relaying, and the peer-cred check
-        // limits connections to same-uid daemon children — so under the current
-        // single-user experimental gate this is the daemon-validated key.
-        // DEFERRED for the cross-user coordinator: the coordinator should
-        // itself recompute the key from the received drv and
-        // re-authorize every subscriber against the resolved key via a real
-        // BuildAuthPolicy (replacing AllowAll), so a HIT cannot let one tenant
-        // attach to another's build.
-        BuildRegistryKey key{drvPathStr};
+        // The registry never trusts a client-asserted key (I2): compute the
+        // key from the derivation we actually *received* (`computeStorePath`
+        // derives the canonical store path of those bytes without writing
+        // them), so a forged path in START_OR_ATTACH cannot collide with — or
+        // attach to — the build of a different derivation. The asserted path
+        // is still the one the build child realises: for a trusted daemon
+        // relay it is the original drv path, which for an input-addressed
+        // derivation need not equal the canonical path of its
+        // `BasicDerivation` projection (the `inputDrvs` are not part of what
+        // is sent), and identical received bytes still coalesce either way.
+        // DEFERRED for the cross-user coordinator: a real multi-tenant
+        // BuildAuthPolicy (replacing the single-identity gate below) is to be
+        // designed together with the trust model before the experimental gate
+        // is widened beyond one user.
+        Derivation keyDrv;
+        static_cast<BasicDerivation &>(keyDrv) = drv;
+        BuildRegistryKey key{parseStore->printStorePath(computeStorePath(*parseStore, keyDrv))};
         conn.key = key;
 
         // Fan-out sinks write straight down this child's control socket; the
@@ -367,7 +382,10 @@ struct Coordinator
                 it->second.done = true;
         };
 
-        BuildAuth auth{.identity = std::to_string(geteuid()), .trusted = trusted != 0};
+        // Authorize the *peer's* authenticated identity (peer-cred at accept),
+        // not our own: under the single-identity policy a foreign peer is
+        // denied uniformly even if the accept gate let it through.
+        BuildAuth auth{.identity = conn.identity, .trusted = trusted != 0};
         SubscribeOptions opts;
         opts.replayWanted = replayWanted != 0;
 
@@ -388,8 +406,9 @@ struct Coordinator
     void handleQueryActive(int connFd)
     {
         // peer-cred at accept established the caller's identity; the registry
-        // filters to builds it may observe (AllowAll under the single-user gate).
-        BuildAuth auth{.identity = std::to_string(geteuid()), .trusted = true};
+        // filters to builds it may observe (under the single-identity policy,
+        // only the coordinator's own identity observes anything).
+        BuildAuth auth{.identity = conns.at(connFd).identity, .trusted = true};
         try {
             writeRecord(connFd, activeRecord(registry->queryActive(auth)));
         } catch (...) {
@@ -526,9 +545,12 @@ struct Coordinator
             if (fds[0].revents & POLLIN) {
                 int c = ::accept(listenFd.get(), nullptr, nullptr);
                 if (c >= 0) {
-                    if (peerIsSameUid(c)) {
+                    // Same-uid transport gate (defense in depth: the
+                    // single-identity registry policy re-checks the identity).
+                    if (auto uid = getPeerUid(c); uid && *uid == geteuid()) {
                         Conn conn;
                         conn.fd = AutoCloseFD{c};
+                        conn.identity = std::to_string(*uid);
                         conns.emplace(c, std::move(conn));
                     } else
                         ::close(c);

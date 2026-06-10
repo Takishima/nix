@@ -509,6 +509,44 @@ TEST(BuildRegistry, authorizeBeforeRegistryUniformDenial)
     EXPECT_TRUE(reg->queryActive(untrusted).empty());
 }
 
+/* The coordinator's shipped policy: only its own identity may build, attach,
+   or observe — the single-user gate enforced by the registry itself rather
+   than only by the transport's same-uid accept check. */
+TEST(BuildRegistry, singleIdentityPolicyDeniesForeignIdentityUniformly)
+{
+    SingleIdentityAuthPolicy policy{"1000"};
+    auto reg = makeInMemoryBuildRegistry(policy);
+
+    BuildAuth own{.identity = "1000", .trusted = true};
+    // Trusted but *foreign*: trust does not bypass the identity boundary.
+    BuildAuth foreign{.identity = "1001", .trusted = true};
+
+    // The owning identity can build...
+    Recorder t;
+    auto rt = reg->startOrAttach(own, key("mine"), t.logSink(), t.resultSink(), {});
+    ASSERT_TRUE(rt);
+    EXPECT_TRUE(rt->started);
+    EXPECT_TRUE(reg->isLive(key("mine")));
+
+    // ...and attach (same-identity dedup still works).
+    Recorder t2;
+    auto rt2 = reg->startOrAttach(own, key("mine"), t2.logSink(), t2.resultSink(), {});
+    ASSERT_TRUE(rt2);
+    EXPECT_TRUE(rt2->deduplicated);
+
+    // A foreign identity is denied uniformly — for a key that exists and one
+    // that does not — so it can neither attach to another identity's build
+    // nor probe for its existence.
+    Recorder f1, f2;
+    EXPECT_FALSE(reg->startOrAttach(foreign, key("mine"), f1.logSink(), f1.resultSink(), {}));
+    EXPECT_FALSE(reg->startOrAttach(foreign, key("phantom"), f2.logSink(), f2.resultSink(), {}));
+    EXPECT_TRUE(f1.frames.empty());
+
+    // And it observes nothing.
+    EXPECT_TRUE(reg->queryActive(foreign).empty());
+    EXPECT_FALSE(reg->queryActive(own).empty());
+}
+
 /* ------------------------------------------------------------------------ *
  * Introspection
  * ------------------------------------------------------------------------ */

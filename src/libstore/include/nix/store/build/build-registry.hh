@@ -101,6 +101,29 @@ struct AllowAllAuthPolicy : BuildAuthPolicy
 };
 
 /**
+ * A policy that permits exactly one identity — the enforced form of the
+ * single-user gate. The coordinator's transport already authenticates peers
+ * (same-uid peer-cred at `accept`); this makes the *registry* enforce the same
+ * boundary, so a transport widened (or buggy) ahead of a real multi-tenant
+ * policy fails closed instead of open. Denials are uniform per `mayBuild`'s
+ * contract: a foreign identity learns nothing about the key.
+ */
+struct SingleIdentityAuthPolicy : BuildAuthPolicy
+{
+    std::string identity;
+
+    explicit SingleIdentityAuthPolicy(std::string identity)
+        : identity(std::move(identity))
+    {
+    }
+
+    bool mayBuild(const BuildAuth & auth, const BuildRegistryKey &) const override
+    {
+        return auth.identity == identity;
+    }
+};
+
+/**
  * One framed chunk of a build's structured log, as fanned out to a subscriber.
  */
 struct BuildLogFrame
