@@ -265,7 +265,13 @@ struct BuildRegistry
     /** The build for `key` finished: deliver `result` (with each subscriber's
      *  `deduplicated` flag stamped on) to every attached subscriber, then drop
      *  the entry. Idempotent: a `finish` for an already-dropped key is a no-op
-     *  (e.g. after a cancel). */
+     *  (e.g. after a cancel).
+     *
+     *  Invariant: a result is shared only with subscribers attached to *this
+     *  execution*, never retained as a canonical answer for `key`. In
+     *  particular a transient failure (`result.failureIsTransient()`) must
+     *  not be replayed to a later arrival, which gets a fresh build; durable
+     *  result reuse must keep transient failures out of its cache. */
     virtual void finish(const BuildRegistryKey & key, BuildResult result) = 0;
 
     /** Whether *any* currently-attached subscriber of `key` requested

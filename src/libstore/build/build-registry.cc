@@ -227,6 +227,8 @@ public:
                 sub.resultSink(r);
             }
         }
+        // Unconditional drop: a result — a transient failure especially —
+        // is never reused for later arrivals.
         drop(*build);
     }
 

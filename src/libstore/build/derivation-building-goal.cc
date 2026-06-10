@@ -22,6 +22,10 @@
 
 #include <algorithm>
 #include <sys/types.h>
+#ifndef _WIN32
+#  include <sys/wait.h>
+#  include <csignal>
+#endif
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -1211,6 +1215,18 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
         }
         buildResult.logTail = std::move(tail);
     }
+
+#ifndef _WIN32
+    /* A SIGKILL death is inflicted from outside the build — most commonly
+       the kernel OOM killer (an intervening shell reports it as exit code
+       137) — so it is a property of where the build ran, not of the
+       derivation. */
+    if ((WIFSIGNALED(e.builderStatus) && WTERMSIG(e.builderStatus) == SIGKILL)
+        || (WIFEXITED(e.builderStatus) && WEXITSTATUS(e.builderStatus) == 137)) {
+        buildResult.failureClass = BuildResult::FailureClass::ResourceExhausted;
+        buildResult.resourceHint = "builder killed (SIGKILL), possibly by the kernel out-of-memory killer";
+    }
+#endif
 
     auto msg =
         fmt("Cannot build '%s'.\n"

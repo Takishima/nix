@@ -465,11 +465,17 @@ of the three freezes** above. They are tracked here so the plan stays complete:
   > serialized on the serve/worker/JSON paths after the deferred set and
   > characterised by `src/libstore-tests` — a `ResourceExhausted` + resource-hint
   > sample in the build-result JSON and the serve-2.9 / worker `build-log-query`
-  > wire fixtures). What remains prototype-only is the *retry/no-cache behaviour*:
-  > both scenarios still exercise Phase-3 *coordinator* semantics (failure
-  > classification → retry sizing; the build-key definition) that have no
-  > production driver yet, so the end-to-end assertions live in the Workstream-A
-  > coordinator prototype (`make check-fwd`):
+  > wire fixtures). **Two pieces of the behaviour are now also in-tree:**
+  > the stock builder classifies an OOM-shaped death (SIGKILL / exit 137) as
+  > `ResourceExhausted` + resource hint in `derivation-building-goal.cc`, and
+  > the no-reuse half of R-class is stated on `BuildRegistry::finish` and
+  > pinned by a `src/libstore-tests` regression test
+  > (`transientFailureIsNotReusedForLaterArrivals`). What remains
+  > prototype-only is the *retry-sizing behaviour*: the scenarios otherwise
+  > exercise Phase-3 *coordinator* semantics (failure classification → retry
+  > sizing; the build-key definition) that have no production driver yet, so
+  > the end-to-end assertions live in the Workstream-A coordinator prototype
+  > (`make check-fwd`):
   > **R-class** — `tests/r-class.sh` (10 assertions: OOM/exit-137 → `class=transient`
   > + `hint=memory`, distinct from a build-error class, and a re-run of the same
   > key starts a fresh build — proving the failure is not cached / no key

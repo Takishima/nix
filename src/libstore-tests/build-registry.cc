@@ -242,6 +242,41 @@ TEST(BuildRegistry, finishDeliversToAllWithPerSubscriberDeduplicated)
     EXPECT_FALSE(reg->isLive(key("k")));
 }
 
+TEST(BuildRegistry, transientFailureIsNotReusedForLaterArrivals)
+{
+    AllowAllAuthPolicy policy;
+    auto reg = makeInMemoryBuildRegistry(policy);
+    BuildAuth auth{.identity = "u", .trusted = true};
+
+    Recorder a;
+    reg->startOrAttach(auth, key("k"), a.logSink(), a.resultSink(), {});
+
+    // The build dies for a builder/infra reason (e.g. OOM kill), not because
+    // of the derivation: a transient-class failure.
+    BuildResult res;
+    res.inner = BuildResult::Failure{{
+        .status = BuildResult::Failure::MiscFailure,
+        .msg = HintFmt("killed"),
+    }};
+    res.failureClass = BuildResult::FailureClass::ResourceExhausted;
+    ASSERT_TRUE(res.failureIsTransient());
+    reg->finish(key("k"), res);
+
+    // The attached subscriber gets the failure (it observed this execution)...
+    ASSERT_TRUE(a.result);
+    EXPECT_EQ(a.result->failureClass, BuildResult::FailureClass::ResourceExhausted);
+
+    // ...but the result is not retained: the key is no longer live, and a
+    // later arrival is a MISS that starts a fresh build rather than being
+    // handed the transient failure.
+    EXPECT_FALSE(reg->isLive(key("k")));
+    Recorder b;
+    auto rb = reg->startOrAttach(auth, key("k"), b.logSink(), b.resultSink(), {});
+    ASSERT_TRUE(rb);
+    EXPECT_FALSE(rb->deduplicated) << "later arrival must start fresh, not attach to anything";
+    EXPECT_FALSE(b.result) << "the stale transient failure must not be replayed";
+}
+
 TEST(BuildRegistry, finishIsIdempotentAfterCancel)
 {
     AllowAllAuthPolicy policy;
