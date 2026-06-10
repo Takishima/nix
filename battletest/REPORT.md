@@ -9,6 +9,13 @@
 > | 2 (cancel doesn't stop the build) | `libstore: make coordinator cancellation actually stop the build` | `tests/functional/build-dedup-cancel-last.sh` |
 > | 3 (duplicate fail-loud tail) + 4 (signal→exit-code downgrade) | `nix: fix remote-failure rendering (duplicate tail, hook status)` | extended `tests/functional/build-remote-fail-loud.sh` |
 >
+> **Re-verified end-to-end:** the matrix was re-run on this kind cluster
+> against an image built from the fixed branch
+> (`2.35.0pre20260610_7424297`, run `124040`): **10/10 PASS**, including
+> the two previous failures — `2-live-streaming` (log lines visible
+> mid-build on `ssh://` and `ssh-ng://`) and `5b-refcount-cancel`
+> (builds before=1, after-kill-one=1, after-kill-both=0).
+>
 > Anomalies 5 (`ResourceExhausted` not surfaced end-to-end) and 6
 > (new-CLI `nix build --store ssh://` build gap) remain open — both need
 > a small design decision rather than a contained patch.
