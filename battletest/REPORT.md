@@ -1,5 +1,22 @@
 # battletest report — remote-build protocol branch on Kubernetes
 
+> **Status update:** anomalies 1–4 below have since been fixed on this
+> branch, each with a regression test that reproduces it first:
+>
+> | anomaly | fix | tests |
+> |---|---|---|
+> | 1 (no serve log delivery with coordinator) | `libstore: surface coordinator-relayed build logs as results` | `CoordinatorRelay.*` unit tests; `tests/functional/build-remote-serve-log-stream-coordinator.sh` |
+> | 2 (cancel doesn't stop the build) | `libstore: make coordinator cancellation actually stop the build` | `tests/functional/build-dedup-cancel-last.sh` |
+> | 3 (duplicate fail-loud tail) + 4 (signal→exit-code downgrade) | `nix: fix remote-failure rendering (duplicate tail, hook status)` | extended `tests/functional/build-remote-fail-loud.sh` |
+>
+> Anomalies 5 (`ResourceExhausted` not surfaced end-to-end) and 6
+> (new-CLI `nix build --store ssh://` build gap) remain open — both need
+> a small design decision rather than a contained patch.
+> Incidental finding while writing the killed-builder test: a sandboxed
+> builder is PID 1 of its pid namespace, so a *self*-sent SIGKILL is
+> silently dropped by the kernel, and chroot stores force the sandbox on
+> (`storeDir != realStoreDir`) even with `sandbox = false`.
+
 Branch under test: `claude/remote-builder-protocol-redesign-ILL36`
 (nix `2.35.0pre20260610_f551e7f`), negative control: `nixos/nix:latest`
 (nix `2.34.7`). Real OpenSSH 10.3 between pods, kind cluster, two branch
