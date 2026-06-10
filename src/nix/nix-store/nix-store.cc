@@ -10,6 +10,7 @@
 #include "nix/store/local-store.hh"
 #include "nix/store/serve-protocol.hh"
 #include "nix/store/serve-protocol-connection.hh"
+#include "nix/store/serve-protocol-log-tunnel.hh"
 #include "nix/store/worker-protocol.hh" // for the STDERR_* log-tunnel framing
 #include "nix/util/logging.hh"
 #include "nix/util/serialise.hh"
@@ -876,119 +877,6 @@ static void opOptimise(Strings opFlags, Strings opArgs)
 
     store->optimiseStore();
 }
-
-namespace {
-
-/* Serialize logger fields the same way the worker-protocol stderr tunnel does
-   (matches `readServeLogFields` on the client). Kept local to avoid clashing
-   with the identically-shaped operator in daemon.cc. */
-static void writeServeLogFields(Sink & to, const Logger::Fields & fields)
-{
-    to << fields.size();
-    for (auto & f : fields) {
-        to << (uint64_t) f.type;
-        if (f.type == Logger::Field::tInt)
-            to << f.i;
-        else if (f.type == Logger::Field::tString)
-            to << f.s;
-        else
-            unreachable();
-    }
-}
-
-/* Serve-side stderr log tunnel: frames a build's log activity as STDERR_*
-   messages onto
-   the serve connection, exactly mirroring the worker protocol's `TunnelLogger`
-   (daemon.cc). Used only behind the unstable serve 2.9 / `serve-build-logs`
-   gate, so an old peer (e.g. Hydra at 2.8) negotiates down and never sees it.
-   Build errors are still conveyed by the existing result encoding, so this
-   only emits log frames terminated by STDERR_LAST (never STDERR_ERROR). */
-struct ServeTunnelLogger : Logger
-{
-    BufferedSink & to;
-    bool canSend = false;
-    std::vector<std::string> pending;
-
-    ServeTunnelLogger(BufferedSink & to)
-        : to(to)
-    {
-    }
-
-    void enqueue(std::string s)
-    {
-        if (canSend) {
-            to(s);
-            to.flush();
-        } else
-            pending.push_back(std::move(s));
-    }
-
-    void log(Verbosity lvl, std::string_view s) override
-    {
-        if (lvl > verbosity)
-            return;
-        StringSink buf;
-        buf << STDERR_NEXT << (std::string(s) + "\n");
-        enqueue(std::move(buf.s));
-    }
-
-    void logEI(const ErrorInfo & ei) override
-    {
-        if (ei.level > verbosity)
-            return;
-        std::ostringstream oss;
-        showErrorInfo(oss, ei, false);
-        StringSink buf;
-        buf << STDERR_NEXT << oss.view();
-        enqueue(std::move(buf.s));
-    }
-
-    void startActivity(
-        ActivityId act, Verbosity lvl, ActivityType type, const std::string & s, const Fields & fields, ActivityId parent)
-        override
-    {
-        StringSink buf;
-        buf << STDERR_START_ACTIVITY << act << (uint64_t) lvl << (uint64_t) type << s;
-        writeServeLogFields(buf, fields);
-        buf << parent;
-        enqueue(std::move(buf.s));
-    }
-
-    void stopActivity(ActivityId act) override
-    {
-        StringSink buf;
-        buf << STDERR_STOP_ACTIVITY << act;
-        enqueue(std::move(buf.s));
-    }
-
-    void result(ActivityId act, ResultType type, const Fields & fields) override
-    {
-        StringSink buf;
-        buf << STDERR_RESULT << act << (uint64_t) type;
-        writeServeLogFields(buf, fields);
-        enqueue(std::move(buf.s));
-    }
-
-    /* Begin streaming: flush anything buffered before the build started. */
-    void startWork()
-    {
-        canSend = true;
-        for (auto & msg : pending)
-            to(msg);
-        pending.clear();
-        to.flush();
-    }
-
-    /* End the log-frame stream; the result bytes follow. */
-    void stopWork()
-    {
-        canSend = false;
-        to << STDERR_LAST;
-        to.flush();
-    }
-};
-
-} // namespace
 
 /* Serve the nix store in a way usable by a restricted ssh user. */
 static void opServe(Strings opFlags, Strings opArgs)
