@@ -461,13 +461,14 @@ of the three freezes** above. They are tracked here so the plan stays complete:
 
   > **Placement decided: throw-away prototype, not real tests** — for the
   > *behaviour*. The §4.4 classification **fields themselves now exist in-tree**
-  > (`BuildResult::failureClass` / `resourceHint` / `failureIsTransient()`,
+  > (`BuildResult::failureClass`, the memory facts `killedForMemory` /
+  > `peakMemoryBytes`, and `failureIsTransient()`,
   > serialized on the serve/worker/JSON paths after the deferred set and
-  > characterised by `src/libstore-tests` — a `ResourceExhausted` + resource-hint
+  > characterised by `src/libstore-tests` — a `ResourceExhausted` + memory-facts
   > sample in the build-result JSON and the serve-2.9 / worker `build-log-query`
   > wire fixtures). **Two pieces of the behaviour are now also in-tree:**
   > the stock builder classifies an OOM-shaped death (SIGKILL / exit 137) as
-  > `ResourceExhausted` + resource hint in `derivation-building-goal.cc`, and
+  > `ResourceExhausted` + `killedForMemory` in `derivation-building-goal.cc`, and
   > the no-reuse half of R-class is stated on `BuildRegistry::finish` and
   > pinned by a `src/libstore-tests` regression test
   > (`transientFailureIsNotReusedForLaterArrivals`). What remains

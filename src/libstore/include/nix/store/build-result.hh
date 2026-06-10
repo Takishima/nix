@@ -287,11 +287,18 @@ struct BuildResult
     FailureClass failureClass = FailureClass::BuildError;
 
     /**
-     * For a `ResourceExhausted` failure, an optional human-readable hint about
-     * what ran out (e.g. `"killed-for-memory; peak 4.2 GiB"`), so a scheduler
-     * can right-size a retry instead of guessing. Empty when unknown / N/A.
+     * Whether the builder was killed for exceeding memory (e.g. by the
+     * kernel OOM killer), when known. Refines a `ResourceExhausted` failure
+     * so a scheduler can right-size a retry instead of guessing.
      */
-    std::string resourceHint;
+    bool killedForMemory = false;
+
+    /**
+     * Peak memory usage of the build in bytes, when measured (0 = unknown).
+     * Filled from the build's cgroup where one is used; meaningful for
+     * successful builds too.
+     */
+    uint64_t peakMemoryBytes = 0;
 
     /**
      * Whether this failure is transient / builder-internal rather than

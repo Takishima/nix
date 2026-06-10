@@ -50,11 +50,11 @@ BuildResult ServeProto::Serialise<BuildResult>::read(const StoreDirConfig & stor
         conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
         res.exitCode = (int64_t) exitCode;
         // Deferred dedup/fleet set, after the frozen core
-        // (builderId, deduplicated, then the failure-class/resource-hint pair —
+        // (builderId, deduplicated, then failureClass and the memory fields —
         // see serve-diag-core.cc).
         conn.from >> res.builderId >> res.deduplicated;
         uint64_t failureClass = 0;
-        conn.from >> failureClass >> res.resourceHint;
+        conn.from >> failureClass >> res.killedForMemory >> res.peakMemoryBytes;
         res.failureClass = (BuildResult::FailureClass) failureClass;
     }
 
@@ -115,10 +115,10 @@ void ServeProto::Serialise<BuildResult>::write(
         if (conn.version >= ServeProto::Version{2, 9}) {
             conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
             // Deferred dedup/fleet set, after the frozen core
-            // (builderId, deduplicated, then the failure-class/resource-hint
+            // (builderId, deduplicated, then failureClass and the memory
             // pair — see serve-diag-core.cc).
             conn.to << res.builderId << res.deduplicated;
-            conn.to << (uint64_t) res.failureClass << res.resourceHint;
+            conn.to << (uint64_t) res.failureClass << res.killedForMemory << res.peakMemoryBytes;
         }
     };
 

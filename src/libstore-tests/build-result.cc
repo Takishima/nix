@@ -118,7 +118,8 @@ INSTANTIATE_TEST_SUITE_P(
                 .timesBuilt = 1,
                 .exitCode = 137,
                 .failureClass = BuildResult::FailureClass::ResourceExhausted,
-                .resourceHint = "killed-for-memory; peak 4.2 GiB",
+                .killedForMemory = true,
+                .peakMemoryBytes = 4509715456,
             },
         }));
 

@@ -17,6 +17,12 @@ StringMap getCgroups(const std::filesystem::path & cgroupFile);
 struct CgroupStats
 {
     std::optional<std::chrono::microseconds> cpuUser, cpuSystem;
+
+    /**
+     * Peak memory usage in bytes (cgroup v2 `memory.peak`; absent on
+     * kernels that do not expose it).
+     */
+    std::optional<uint64_t> memoryPeak;
 };
 
 /**

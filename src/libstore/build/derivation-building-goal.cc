@@ -1224,7 +1224,7 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
     if ((WIFSIGNALED(e.builderStatus) && WTERMSIG(e.builderStatus) == SIGKILL)
         || (WIFEXITED(e.builderStatus) && WEXITSTATUS(e.builderStatus) == 137)) {
         buildResult.failureClass = BuildResult::FailureClass::ResourceExhausted;
-        buildResult.resourceHint = "builder killed (SIGKILL), possibly by the kernel out-of-memory killer";
+        buildResult.killedForMemory = true;
     }
 #endif
 

@@ -215,8 +215,11 @@ void adl_serializer<BuildResult>::to_json(json & res, const BuildResult & br)
     if (br.failureClass != BuildResult::FailureClass::BuildError) {
         res["failureClass"] = failureClassToString(br.failureClass);
     }
-    if (!br.resourceHint.empty()) {
-        res["resourceHint"] = br.resourceHint;
+    if (br.killedForMemory) {
+        res["killedForMemory"] = br.killedForMemory;
+    }
+    if (br.peakMemoryBytes != 0) {
+        res["peakMemoryBytes"] = br.peakMemoryBytes;
     }
 
     // Handle success or failure variant
@@ -279,8 +282,11 @@ BuildResult adl_serializer<BuildResult>::from_json(const json & _json)
     if (auto failureClass = optionalValueAt(json, "failureClass")) {
         br.failureClass = failureClassFromString(getString(*failureClass));
     }
-    if (auto resourceHint = optionalValueAt(json, "resourceHint")) {
-        br.resourceHint = getString(*resourceHint);
+    if (auto killedForMemory = optionalValueAt(json, "killedForMemory")) {
+        br.killedForMemory = getBoolean(*killedForMemory);
+    }
+    if (auto peakMemoryBytes = optionalValueAt(json, "peakMemoryBytes")) {
+        br.peakMemoryBytes = getUnsigned(*peakMemoryBytes);
     }
 
     // Determine success or failure based on success field

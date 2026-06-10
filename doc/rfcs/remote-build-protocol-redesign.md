@@ -847,7 +847,9 @@ Extend `BuildResult` (and its serialisers) with, all optional/back-compat:
 
   > **Landed (the fields):** `BuildResult` now carries a `failureClass`
   > (`BuildError` / `ResourceExhausted` / `Evicted` / `Infra`, defaulting to the
-  > build-intrinsic `BuildError`) and an optional `resourceHint`, with a derived
+  > build-intrinsic `BuildError`) and optional memory facts (`killedForMemory`,
+  > `peakMemoryBytes` — measured from the build's cgroup when one is used,
+  > also for successes), with a derived
   > `failureIsTransient()` predicate, serialized on the serve, worker, and JSON
   > paths after the deferred dedup/fleet set and characterised by
   > `src/libstore-tests`. They ride the **deferred** set (alongside
@@ -858,8 +860,8 @@ Extend `BuildResult` (and its serialisers) with, all optional/back-compat:
   >
   > **Landed (first producer + the no-reuse invariant):** the stock builder
   > now classifies a SIGKILL death (the kernel OOM killer's signature; exit
-  > code 137 via an intervening shell) as `ResourceExhausted` with a
-  > resource hint, where it sets the rest of the diagnostic core
+  > code 137 via an intervening shell) as `ResourceExhausted` with
+  > `killedForMemory` set, where it sets the rest of the diagnostic core
   > (`derivation-building-goal.cc`); everything else stays `BuildError`. The
   > no-reuse invariant is now stated on `BuildRegistry::finish` and pinned by
   > a regression test (a transient failure is delivered only to subscribers

@@ -561,7 +561,8 @@ VERSIONED_CHARACTERIZATION_TEST(
                 .exitCode = 137,
                 .logTail = "Killed\n",
                 .failureClass = BuildResult::FailureClass::ResourceExhausted,
-                .resourceHint = "killed-for-memory; peak 4.2 GiB",
+                .killedForMemory = true,
+                .peakMemoryBytes = 4509715456,
             },
             BuildResult{
                 .inner{BuildResult::Failure{{
