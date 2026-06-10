@@ -217,8 +217,6 @@ private:
      * Used by shutdownConnections() to break blocking I/O on interrupt.
      */
     Sync<std::set<Descriptor>> connectionFds;
-
-    void copyDrvsFromEvalStore(const std::vector<DerivedPath> & paths, std::shared_ptr<Store> evalStore);
 };
 
 } // namespace nix

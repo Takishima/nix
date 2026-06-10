@@ -150,6 +150,7 @@ suites = [
       'build-active-builds.sh',
       'build-remote-elastic.sh',
       'store-split-log.sh',
+      'store-split-serve.sh',
       'post-hook.sh',
       'function-trace.sh',
       'formatter.sh',

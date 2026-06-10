@@ -1095,6 +1095,15 @@ protected:
     {
         throw Unsupported("operation '%s' is not supported by store '%s'", op, config.getHumanReadableURI());
     }
+
+    /**
+     * Helper for `buildPaths()` overrides that forward the build to a
+     * remote side with no access to the eval store: copy the closures
+     * of the requested derivations (the `.drv` files and their
+     * sources) from `evalStore` into this store, so the remote can
+     * read and realise them.
+     */
+    void copyDrvsFromEvalStore(const std::vector<DerivedPath> & paths, std::shared_ptr<Store> evalStore);
 };
 
 /**

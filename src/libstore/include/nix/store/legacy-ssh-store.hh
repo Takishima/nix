@@ -176,15 +176,9 @@ public:
         unsupported("ensurePath");
     }
 
-    ref<SourceAccessor> getFSAccessor(bool requireValidPath) override
-    {
-        unsupported("getFSAccessor");
-    }
+    ref<SourceAccessor> getFSAccessor(bool requireValidPath) override;
 
-    std::shared_ptr<SourceAccessor> getFSAccessor(const StorePath & path, bool requireValidPath) override
-    {
-        unsupported("getFSAccessor");
-    }
+    std::shared_ptr<SourceAccessor> getFSAccessor(const StorePath & path, bool requireValidPath) override;
 
     /**
      * The default instance would schedule the work on the client side, but

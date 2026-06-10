@@ -9,10 +9,8 @@
 # (the build runs on the build store, which is a *different* store from where
 # the derivation was evaluated), using fake-SSH to localhost (no sshd).
 #
-# Note: building on an `ssh://` (legacy serve) store with a separate eval store
-# is a separate, deferred item (`realiseRemote(...)`): the serve
-# build model can't realise a copied drv closure on its own. `ssh-ng://` is the
-# split transport that works today, which is what this log parity rides on.
+# Note: the same split over the `ssh://` (legacy serve) store is exercised by
+# store-split-serve.sh.
 
 source common.sh
 
