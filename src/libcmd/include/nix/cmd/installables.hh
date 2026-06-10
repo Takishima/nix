@@ -167,6 +167,43 @@ struct Installable
         const Installables & installables,
         BuildMode bMode = bmNormal);
 
+    /**
+     * The result of `buildWithFailures`: the paths that were built,
+     * plus the per-derivation results of the ones that failed.
+     */
+    struct BuildResultsWithFailures
+    {
+        std::vector<BuiltPathWithResult> built;
+
+        /**
+         * The failed results, keyed by what was being built. Only
+         * completed failures appear here; goals that were cancelled
+         * before producing a result (e.g. without `--keep-going`)
+         * do not.
+         */
+        std::vector<KeyedBuildResult> failures;
+    };
+
+    /**
+     * Like `build`, but a failed derivation does not throw: it is
+     * returned as its `KeyedBuildResult` alongside the paths that did
+     * build, so the caller (e.g. `nix build --json`) can render a
+     * machine-readable failure surface. The caller is responsible for
+     * still failing the command, see `throwBuildErrors`.
+     */
+    static BuildResultsWithFailures buildWithFailures(
+        ref<Store> evalStore,
+        ref<Store> store,
+        Realise mode,
+        const Installables & installables,
+        BuildMode bMode = bmNormal);
+
+    /**
+     * Throw the error(s) for the failures among `buildResults`, exactly
+     * as `build` would have. No-op if there are none.
+     */
+    static void throwBuildErrors(std::vector<KeyedBuildResult> & buildResults, const Store & store);
+
     static std::set<StorePath> toStorePathSet(
         ref<Store> evalStore, ref<Store> store, Realise mode, OperateOn operateOn, const Installables & installables);
 

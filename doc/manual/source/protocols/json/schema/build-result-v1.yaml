@@ -49,6 +49,122 @@ properties:
     description: |
       System CPU time the build took, in microseconds.
 
+  logRef:
+    type: string
+    title: Build log reference
+    description: |
+      The derivation path under which the builder that produced this result
+      persisted the build log, so the full log can be fetched with
+      `nix log --store <builder> <logRef>`.
+
+      > **Note**
+      >
+      > Part of the structured build diagnostics, which are still
+      > experimental: present only when produced by a Nix with the
+      > `serve-build-logs` / `build-log-query` features. Absent when unknown.
+
+  failurePhase:
+    type: string
+    title: Failed phase
+    description: |
+      For a failure, the build phase that failed (e.g. `build`), if known.
+
+      > **Note**
+      >
+      > Part of the experimental structured build diagnostics; absent when
+      > unknown.
+
+  exitCode:
+    type: integer
+    title: Builder exit status
+    description: |
+      For a failure, the builder's exit status (in `wait(2)` encoding), if
+      the builder ran. Absent (or 0) when not applicable.
+
+      > **Note**
+      >
+      > Part of the experimental structured build diagnostics.
+
+  logTail:
+    type: string
+    title: Build log tail
+    description: |
+      For a failure, the last lines of the build log, so the failure can be
+      inspected without fetching the full log.
+
+      > **Note**
+      >
+      > Part of the experimental structured build diagnostics; absent when
+      > unknown.
+
+  deduplicated:
+    type: boolean
+    title: Deduplicated
+    description: |
+      Whether this result was produced by a build the requesting session
+      *attached to* rather than started — i.e. it was coalesced onto an
+      in-flight build of the same resolved derivation. Absent means `false`.
+
+      > **Note**
+      >
+      > Part of the experimental `build-coordinator` feature.
+
+  builderId:
+    type: string
+    title: Builder identifier
+    description: |
+      An opaque identifier of the builder that actually produced this result
+      (e.g. which node in an elastic fleet). Purely informational; absent
+      when unknown.
+
+      > **Note**
+      >
+      > Part of the experimental structured build diagnostics.
+
+  failureClass:
+    type: string
+    title: Failure classification
+    description: |
+      How a failure should be classified *for retry*, orthogonal to the exit
+      code: whether the failure is a property of the derivation
+      (`BuildError`) or of where it ran (all other values, e.g. an
+      out-of-memory kill). Absent means `BuildError` (build-intrinsic).
+
+      > **Note**
+      >
+      > Part of the experimental structured build diagnostics.
+    enum:
+      - "BuildError"
+      - "ResourceExhausted"
+      - "Evicted"
+      - "Infra"
+
+  killedForMemory:
+    type: boolean
+    title: Killed for memory
+    description: |
+      Whether the builder was killed for exceeding memory (e.g. by the
+      kernel out-of-memory killer), when known. Refines a
+      `ResourceExhausted` failure so a scheduler can right-size a retry.
+      Absent means `false` / unknown.
+
+      > **Note**
+      >
+      > Part of the experimental structured build diagnostics.
+
+  peakMemoryBytes:
+    type: integer
+    minimum: 0
+    title: Peak memory use
+    description: |
+      Peak memory use of the build in bytes, when measured (from the
+      build's cgroup, where one is used). Absent when unmeasured;
+      meaningful for successful builds too.
+
+      > **Note**
+      >
+      > Part of the experimental structured build diagnostics.
+
 "$defs":
   success:
     type: object

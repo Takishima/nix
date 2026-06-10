@@ -167,6 +167,7 @@ suites = [
       'placeholders.sh',
       'ssh-relay.sh',
       'build.sh',
+      'build-json-failures.sh',
       'build-cores.sh',
       'build-delete.sh',
       'output-normalization.sh',

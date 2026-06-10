@@ -19,3 +19,15 @@
 ```json
 {{#include schema/build-result-v1/not-deterministic.json}}
 ```
+
+### Failed build (builder killed for memory)
+
+```json
+{{#include schema/build-result-v1/resource-exhausted.json}}
+```
+
+### Successful build (attached to an in-flight build)
+
+```json
+{{#include schema/build-result-v1/deduplicated.json}}
+```

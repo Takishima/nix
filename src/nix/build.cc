@@ -84,6 +84,23 @@ static nlohmann::json derivedPathsToJSON(const DerivedPaths & paths, Store & sto
     return res;
 }
 
+/* A failed build serialized for the machine-readable failure surface:
+   the canonical `BuildResult` JSON (which carries the structured
+   failure facts: `status`, `errorMsg`, `exitCode`, `logTail`, `logRef`,
+   `failureClass`, `killedForMemory`, `peakMemoryBytes`, ...), plus the
+   path it is keyed on, in this command's serialization style (store
+   paths include the store dir, like the success entries above). */
+static nlohmann::json keyedBuildResultToJSON(Store & store, const KeyedBuildResult & kbr)
+{
+    nlohmann::json j = static_cast<const BuildResult &>(kbr);
+    auto pathJSON = toJSON(store, kbr.path);
+    if (pathJSON.is_object())
+        j.update(pathJSON);
+    else
+        j["path"] = std::move(pathJSON);
+    return j;
+}
+
 static nlohmann::json
 builtPathsWithResultToJSON(const std::vector<BuiltPathWithResult> & buildables, const Store & store)
 {
@@ -154,11 +171,20 @@ struct CmdBuild : InstallablesCommand, MixOutLinkByDefault, MixDryRun, MixJSON, 
             return;
         }
 
-        auto buildables =
-            Installable::build(getEvalStore(), store, Realise::Outputs, installables, repair ? bmRepair : buildMode);
+        auto [buildables, failures] = Installable::buildWithFailures(
+            getEvalStore(), store, Realise::Outputs, installables, repair ? bmRepair : buildMode);
 
-        if (json)
-            logger->cout("%s", builtPathsWithResultToJSON(buildables, *store).dump());
+        if (json) {
+            auto out = builtPathsWithResultToJSON(buildables, *store);
+            for (auto & failure : failures)
+                out.push_back(keyedBuildResultToJSON(*store, failure));
+            logger->cout("%s", out.dump());
+        }
+
+        /* Fail the command exactly as `Installable::build` would have,
+           but only after the JSON above made the failures
+           machine-readable on stdout. */
+        Installable::throwBuildErrors(failures, *store);
 
         createOutLinksMaybe(buildables, store);
 
