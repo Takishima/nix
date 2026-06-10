@@ -171,6 +171,9 @@ public:
     void buildPaths(
         const std::vector<DerivedPath> & drvPaths, BuildMode buildMode, std::shared_ptr<Store> evalStore) override;
 
+    std::vector<KeyedBuildResult> buildPathsWithResults(
+        const std::vector<DerivedPath> & reqs, BuildMode buildMode, std::shared_ptr<Store> evalStore) override;
+
     void ensurePath(const StorePath & path) override
     {
         unsupported("ensurePath");

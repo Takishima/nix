@@ -275,6 +275,46 @@ void LegacySSHStore::buildPaths(
     }
 }
 
+std::vector<KeyedBuildResult> LegacySSHStore::buildPathsWithResults(
+    const std::vector<DerivedPath> & reqs, BuildMode buildMode, std::shared_ptr<Store> evalStore)
+{
+    /* The inherited implementation schedules an in-process Worker, which
+       cannot build on a non-local store (it would reject every derivation
+       with "Unable to build with a primary store that isn't a local store").
+       Answer per-derivation via the serve `BuildDerivation` command instead,
+       with the same closure shipping as `buildPaths`. */
+    copyDrvsFromEvalStore(reqs, evalStore, /*includeOutputs=*/true);
+
+    auto & drvStore = evalStore ? *evalStore : static_cast<Store &>(*this);
+
+    std::vector<KeyedBuildResult> results;
+    results.reserve(reqs.size());
+
+    for (auto & req : reqs) {
+        auto * bfd = std::get_if<DerivedPath::Built>(&req);
+        if (!bfd)
+            throw Error(
+                "wanted to fetch '%s' but the legacy ssh protocol doesn't support merely substituting paths via the build paths command. It would build them instead. Try using ssh-ng://",
+                req.to_string(*this));
+        auto * drvPath = std::get_if<SingleDerivedPath::Opaque>(&bfd->drvPath->raw());
+        if (!drvPath)
+            throw Error(
+                "wanted to build '%s', but the legacy ssh protocol doesn't support building a derivation that is itself a build product. Try using ssh-ng://",
+                req.to_string(*this));
+
+        auto res = buildDerivation(drvPath->path, drvStore.readDerivation(drvPath->path), buildMode);
+
+        // Report only the requested outputs, like the in-process goals do.
+        if (auto * success = res.tryGetSuccess())
+            if (auto * names = std::get_if<OutputsSpec::Names>(&bfd->outputs.raw))
+                std::erase_if(success->builtOutputs, [&](auto & e) { return !names->contains(e.first); });
+
+        results.emplace_back(std::move(res), req);
+    }
+
+    return results;
+}
+
 void LegacySSHStore::computeFSClosure(
     const StorePathSet & paths, StorePathSet & out, bool flipDirection, bool includeOutputs, bool includeDerivers)
 {

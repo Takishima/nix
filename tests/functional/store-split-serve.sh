@@ -70,3 +70,19 @@ outPath=$(nix-build dependencies.nix --no-out-link \
 grepQuiet dependencies-top "$HOOK_DEST"
 # ...but not the prebuilt input: its output was copied from the eval store.
 grepQuietInverse dependencies-input-2 "$HOOK_DEST"
+
+# The new CLI takes the same split: `nix build` resolves builds through
+# `buildPathsWithResults`, which used to fall into the generic in-process
+# Worker and be rejected with "Unable to build with a primary store that
+# isn't a local store".
+clearStore
+rm -rf "$eval_store"
+
+outPath=$(nix build -f dependencies.nix --no-link --print-out-paths \
+    --eval-store "$eval_store" --store ssh://localhost)
+[[ -e $outPath/foobar ]]
+
+# Re-running is a no-op and reports the same outputs.
+outPath2=$(nix build -f dependencies.nix --no-link --print-out-paths \
+    --eval-store "$eval_store" --store ssh://localhost)
+[[ $outPath = "$outPath2" ]]
