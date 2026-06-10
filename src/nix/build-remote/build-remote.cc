@@ -71,11 +71,17 @@ static std::string renderRemoteBuildLogTail(
 {
     constexpr size_t maxLines = 25;
     try {
-        std::optional<std::string> log;
-        /* Prefer the inline tail (no round-trip); else fetch the full log. */
+        /* A remote with structured diagnostics has already rendered the tail
+           into the failure message itself; repeating it would print it twice.
+           Only add what the remote could not know: the `--store` log hint. */
         if (!result.logTail.empty())
-            log = result.logTail;
-        else if (auto * logStore = dynamic_cast<LogStore *>(&remoteStore))
+            return fmt(
+                "\nFor full logs, run:\n  " ANSI_BOLD "nix log --store '%s' '%s'" ANSI_NORMAL,
+                storeUri,
+                localStore.printStorePath(drvPath));
+
+        std::optional<std::string> log;
+        if (auto * logStore = dynamic_cast<LogStore *>(&remoteStore))
             log = logStore->getBuildLogExact(drvPath);
         if (!log || log->empty())
             return "";

@@ -39,4 +39,24 @@ in
       exit 1
     '';
   };
+
+  # A long-running builder the test SIGKILLs from outside, as the kernel OOM
+  # killer would. Script via `sh -c` so the marker is in the process argv
+  # (pgrep-able); self-kill is impossible here — the sandboxed builder is
+  # PID 1 of its pid namespace, which silently drops self-sent SIGKILL.
+  killedBuilder = derivation {
+    name = "fail-loud-remote-killed";
+    inherit system;
+    builder = busybox;
+    args = [
+      "sh"
+      "-c"
+      ''
+        echo "remote-fail-killed-marker"
+        i=0
+        while [ "$i" -lt 600000000 ]; do i=$((i + 1)); done
+        echo unreachable > $out
+      ''
+    ];
+  };
 }
