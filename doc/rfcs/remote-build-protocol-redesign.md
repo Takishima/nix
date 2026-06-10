@@ -233,9 +233,11 @@ the design must not regress it and must extend logging to cover it.
   (`worker.hh:200-202`); inputs are copied eval→build in
   `derivation-building-goal.cc:151-162`. The drv-and-closure copy in the
   hook is hand-rolled but correct (`build-remote.cc:307,341,355,398`).
-* The one real sharp edge is that `LegacySSHStore::buildPaths` throws
+* The one real sharp edge was that `LegacySSHStore::buildPaths` threw
   *"building on an SSH store is incompatible with '--eval-store'"*
-  (`legacy-ssh-store.cc:222`). Outside that specific `ssh://`+`--eval-store`
+  (`legacy-ssh-store.cc:222`). *(Lifted by Phase 4's cleanup: the serve
+  client now copies the drv closure from the eval store like `ssh-ng://`
+  does.)* Outside that specific `ssh://`+`--eval-store`
   combination, the split behaves like the non-split case — **the missing
   piece is purely the logs (§2.1), not the copying.**
 
@@ -911,7 +913,11 @@ The store split already works functionally, so this section is about
   (`build-remote.cc:307,355`). While there, surface those copies as
   observable activities ("copying derivation closure eval→build", "copying
   outputs build→eval") so the (already-correct) data movement is at least
-  visible.
+  visible. *(Landed — Phase 4: the serve client reuses the same
+  `copyDrvsFromEvalStore` choreography as `ssh-ng://`, hoisted to `Store`;
+  the copy is observable through `copyPaths`' standard copy activity. The
+  serve side builds without substitutes, so inputs not valid on the builder
+  are realised there from source.)*
 * Optionally fold the hook's choreography behind a single entry point —
   conceptually `realiseRemote(evalStore, buildStore, derivedPaths)` — that
   copies the drv closure, opens a Build Session and streams logs (§4.2),
@@ -1420,6 +1426,14 @@ the log fixes.
   the phase is mostly a test matrix. Bundle the minor cleanup of lifting
   the `ssh://`+`--eval-store` rejection and making the closure copies
   observable; optionally introduce `realiseRemote(...)`. Delivers **G4**.
+  *Landed:* the log-parity matrix (`store-split-log.sh`) and the cleanup —
+  `LegacySSHStore::buildPaths` now copies the derivation closure from the
+  eval store (the same choreography `RemoteStore` uses, hoisted to
+  `Store::copyDrvsFromEvalStore`) instead of rejecting the combination, so
+  `nix-build --store ssh://… --eval-store …` works (`store-split-serve.sh`).
+  The serve side builds without substitutes, so inputs not valid on the
+  builder are realised there from source; copying already-realised input
+  outputs (`realiseRemote(...)`) remains a deferred optimisation.
   *Touches:* `legacy-ssh-store.cc`, `build-remote.cc`,
   `libcmd/installables.cc`, `store-api`, `tests/functional/`.
 
