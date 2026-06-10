@@ -291,6 +291,10 @@ struct Coordinator
                 pipe.readSide.close();
                 int wfd = pipe.writeSide.get();
                 try {
+                    // The inherited mask blocks SIGINT (handled by a thread
+                    // that doesn't survive fork); without re-arming, the
+                    // cancellation SIGINT from `onCancel` is never delivered.
+                    unix::startSignalHandlerThread();
                     // Recursion guard: this build must run locally, not relay
                     // back to the coordinator (the goal checks this env var).
                     setenv("NIX_BUILD_COORDINATOR_INNER", "1", 1);
