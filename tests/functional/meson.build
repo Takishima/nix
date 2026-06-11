@@ -153,6 +153,7 @@ suites = [
       'build-coordinator-bad-socket.sh',
       'build-coordinator-inputs.sh',
       'build-coordinator-wedged.sh',
+      'build-active-builds.sh',
       'build-remote-elastic.sh',
       'store-split-log.sh',
       'store-split-serve.sh',
