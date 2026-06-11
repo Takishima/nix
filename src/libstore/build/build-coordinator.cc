@@ -311,6 +311,19 @@ struct Coordinator
         pid_t pid = startProcess(
             [&]() {
                 pipe.readSide.close();
+                /* Drop every inherited coordinator fd: holding the listening
+                   socket or a client's socket here would keep them alive for
+                   the whole build (a hung accept queue if the coordinator
+                   dies on a platform without PDEATHSIG, half-open client
+                   sockets otherwise). Closing our copy of the election lock
+                   fd is safe: the flock lives on the shared open file
+                   description, which the coordinator still holds. */
+                listenFd.close();
+                electionLock.close();
+                for (auto & [_, c] : conns)
+                    c.fd.close();
+                for (auto & [_, r] : running)
+                    r.pipe.close();
                 int wfd = pipe.writeSide.get();
                 try {
                     // The inherited mask blocks SIGINT (handled by a thread
