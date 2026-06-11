@@ -80,6 +80,14 @@ public:
      */
     std::optional<BuildResult> feed(std::string_view data);
 
+    /**
+     * Whether any bytes have been fed. EOF before any byte means the
+     * coordinator went away between our connect and our request (it
+     * idle-exits); that is retryable like the lost-election race, whereas
+     * EOF mid-stream is a real failure.
+     */
+    bool receivedAnything() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

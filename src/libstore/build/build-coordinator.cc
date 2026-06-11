@@ -63,6 +63,15 @@ bool readN(int fd, char * buf, size_t n)
  *  256 MiB is far above any legitimate record. */
 constexpr uint32_t maxRecordLen = 256u << 20;
 
+/* Retry budget for transient connect races, shared by the blocking and the
+   event-loop relay: the lost election (another process is between taking the
+   lock and binding — a microseconds-wide window) and the idle-exit race (the
+   coordinator exited between our connect and our request — EOF before any
+   byte; the next attempt re-runs the election). The budget is deliberately
+   generous; a hit beyond the first retry means something is genuinely wrong. */
+constexpr int coordinatorConnectRetries = 50;
+constexpr unsigned coordinatorConnectBackoffUs = 100 * 1000;
+
 /** Cap on bytes queued towards one subscriber. The registry's sinks must not
  *  block, so writes are buffered; a subscriber that stops reading past this
  *  cap is dropped like a hangup rather than stalling every other client. */
@@ -841,6 +850,9 @@ struct CoordinatorRelayPump::Impl
     /** Partially received length-prefixed record. */
     std::string pendingRecord;
 
+    /** Whether `feed` has seen any bytes at all. */
+    bool received = false;
+
     Impl(Logger & logger, const std::string & drvPathStr)
         : act(logger, lvlInfo, actBuild, fmt("building '%s'", drvPathStr), Logger::Fields{drvPathStr, "", 1, 1})
     {
@@ -874,6 +886,8 @@ struct CoordinatorRelayPump::Impl
 
     std::optional<BuildResult> feed(std::string_view data)
     {
+        if (!data.empty())
+            received = true;
         pendingRecord.append(data);
         while (true) {
             if (pendingRecord.size() < 4)
@@ -904,6 +918,11 @@ CoordinatorRelayPump & CoordinatorRelayPump::operator=(CoordinatorRelayPump &&) 
 std::optional<BuildResult> CoordinatorRelayPump::feed(std::string_view data)
 {
     return impl->feed(data);
+}
+
+bool CoordinatorRelayPump::receivedAnything() const
+{
+    return impl->received;
 }
 
 std::optional<CoordinatorRelaySession> tryStartCoordinatorRelay(
@@ -944,11 +963,11 @@ CoordinatorRelaySession startCoordinatorRelay(
     Logger & logger,
     bool trusted)
 {
-    for (int attempt = 0; attempt < 50; ++attempt) {
+    for (int attempt = 0; attempt < coordinatorConnectRetries; ++attempt) {
         checkInterrupt();
         if (auto session = tryStartCoordinatorRelay(store, drvPath, drv, buildMode, logger, trusted))
             return std::move(*session);
-        usleep(100000); // 100ms backoff for the lost-election race
+        usleep(coordinatorConnectBackoffUs);
     }
     throw Error("could not reach the build coordinator at '%s'", coordinatorSocketPath(store));
 }
@@ -961,23 +980,31 @@ BuildResult relayBuildToCoordinator(
     Logger & logger,
     bool trusted)
 {
-    auto session = startCoordinatorRelay(store, drvPath, drv, buildMode, logger, trusted);
+    for (int attempt = 0;; ++attempt) {
+        auto session = startCoordinatorRelay(store, drvPath, drv, buildMode, logger, trusted);
 
-    // Relay frames to the ambient logger (→ the client) until the result.
-    char buf[8192];
-    while (true) {
-        ssize_t r = ::read(session.socket.get(), buf, sizeof(buf));
-        if (r == 0)
-            throw Error("build coordinator closed the connection without a result");
-        if (r < 0) {
-            if (errno == EINTR) {
-                checkInterrupt();
-                continue;
+        // Relay frames to the ambient logger (→ the client) until the result.
+        char buf[8192];
+        while (true) {
+            ssize_t r = ::read(session.socket.get(), buf, sizeof(buf));
+            if (r == 0) {
+                if (!session.pump.receivedAnything() && attempt < coordinatorConnectRetries) {
+                    // The coordinator idle-exited between our connect and our
+                    // request; the next attempt re-runs the election.
+                    break;
+                }
+                throw Error("build coordinator closed the connection without a result");
             }
-            throw SysError("reading from coordinator control socket");
+            if (r < 0) {
+                if (errno == EINTR) {
+                    checkInterrupt();
+                    continue;
+                }
+                throw SysError("reading from coordinator control socket");
+            }
+            if (auto res = session.pump.feed(std::string_view(buf, r)))
+                return *res;
         }
-        if (auto res = session.pump.feed(std::string_view(buf, r)))
-            return *res;
     }
 }
 

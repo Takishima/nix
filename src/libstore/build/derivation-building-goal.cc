@@ -466,42 +466,55 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
         && std::holds_alternative<LocalBuildCapability>(localBuildResult)
         && getEnv("NIX_BUILD_COORDINATOR_INNER").value_or("").empty() && dynamic_cast<LocalStore *>(&worker.store)) {
         {
-            /* The connect/spawn handshake is non-blocking: the only retry
-               case is the narrow lost-election race, waited out on the
-               worker's event loop rather than in-goal. */
-            std::optional<CoordinatorRelaySession> relayAttempt;
-            for (int attempt = 0;
-                 !(relayAttempt =
-                       tryStartCoordinatorRelay(worker.store, drvPath, *drv, buildMode, *logger, /*trusted=*/true));
-                 ++attempt) {
-                if (attempt >= 10)
-                    throw Error("could not reach the build coordinator for '%s'", worker.store.printStorePath(drvPath));
-                co_await waitForAWhile();
-            }
-            auto relay = std::move(*relayAttempt);
-            worker.childStarted(
-                shared_from_this(), {relay.socket.get()}, /*inBuildSlot=*/false, /*respectTimeouts=*/false);
+            /* The connect/spawn handshake is non-blocking. Two transient
+               races are retried (waited out on the worker's event loop, not
+               in-goal): the narrow lost election (connect refused while
+               another process is between taking the lock and binding), and
+               the coordinator idle-exiting between our connect and our
+               request (EOF before any byte; the next attempt re-runs the
+               election). Each retry waits a poll interval, so the budget is
+               generous. */
+            constexpr int relayConnectRetries = 10;
 
             std::optional<BuildResult> relayed;
-            while (!relayed) {
-                auto event = co_await WaitForChildEvent{};
-                if (auto * output = std::get_if<ChildOutput>(&event)) {
-                    try {
-                        relayed = relay.pump.feed(output->data);
-                    } catch (...) {
-                        // Unregister before the socket is closed by unwinding.
+            for (int attempt = 0; !relayed; ++attempt) {
+                auto relayAttempt =
+                    tryStartCoordinatorRelay(worker.store, drvPath, *drv, buildMode, *logger, /*trusted=*/true);
+                if (!relayAttempt) {
+                    if (attempt >= relayConnectRetries)
+                        throw Error(
+                            "could not reach the build coordinator for '%s'", worker.store.printStorePath(drvPath));
+                    co_await waitForAWhile();
+                    continue;
+                }
+                auto relay = std::move(*relayAttempt);
+                worker.childStarted(
+                    shared_from_this(), {relay.socket.get()}, /*inBuildSlot=*/false, /*respectTimeouts=*/false);
+
+                bool reconnect = false;
+                while (!relayed && !reconnect) {
+                    auto event = co_await WaitForChildEvent{};
+                    if (auto * output = std::get_if<ChildOutput>(&event)) {
+                        try {
+                            relayed = relay.pump.feed(output->data);
+                        } catch (...) {
+                            // Unregister before the socket is closed by unwinding.
+                            worker.childTerminated(this);
+                            throw;
+                        }
+                    } else if (std::get_if<ChildEOF>(&event)) {
                         worker.childTerminated(this);
-                        throw;
+                        if (!relay.pump.receivedAnything() && attempt < relayConnectRetries)
+                            reconnect = true;
+                        else
+                            co_return doneFailure(BuildError(
+                                BuildResult::Failure::MiscFailure,
+                                "build coordinator closed the connection without a result for '%s'",
+                                worker.store.printStorePath(drvPath)));
+                    } else if (auto * timeout = std::get_if<std::unique_ptr<TimedOut>>(&event)) {
+                        worker.childTerminated(this);
+                        co_return doneFailure(std::move(**timeout));
                     }
-                } else if (std::get_if<ChildEOF>(&event)) {
-                    worker.childTerminated(this);
-                    co_return doneFailure(BuildError(
-                        BuildResult::Failure::MiscFailure,
-                        "build coordinator closed the connection without a result for '%s'",
-                        worker.store.printStorePath(drvPath)));
-                } else if (auto * timeout = std::get_if<std::unique_ptr<TimedOut>>(&event)) {
-                    worker.childTerminated(this);
-                    co_return doneFailure(std::move(**timeout));
                 }
             }
             worker.childTerminated(this);
