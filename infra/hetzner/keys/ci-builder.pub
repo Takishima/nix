@@ -1,0 +1,7 @@
+# Replace this file's contents with the public key of the load-test / CI client
+# that will reach the builders over ssh-ng://nixremote@<host>.
+# Lines starting with '#' are ignored by sshd, so an unpopulated file authorizes
+# no keys (the builder is still reachable for provisioning via its root key).
+#
+# Example:
+#   ssh-ed25519 AAAAC3Nza... ci-builder
