@@ -376,7 +376,7 @@ struct Coordinator
             if (n < 0 && errno == EINTR)
                 continue;
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
-                return; // wait for POLLOUT
+                return;       // wait for POLLOUT
             conn.dead = true; // peer gone (EPIPE etc.)
         }
     }
