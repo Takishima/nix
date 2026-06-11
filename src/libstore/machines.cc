@@ -172,9 +172,19 @@ parseBuilderLine(const StringSet & defaultSystems, const std::string & line, boo
         throw FormatError(
             "bad machine specification: store URL was not found at the first column of a row: '%s'", line);
 
+    auto parseBoolField = [&](size_t fieldIndex) {
+        const auto & str = tokens[fieldIndex];
+        if (str == "true" || str == "1")
+            return true;
+        if (str == "false" || str == "0")
+            return false;
+        throw FormatError(
+            "bad machine specification: failed to convert column #%lu in a row: '%s' to 'bool'", fieldIndex, line);
+    };
+
     // TODO use designated initializers, once C++ supports those with
     // custom constructors.
-    return {
+    Machine machine{
         // `storeUri`
         tokens[0],
         // `systemTypes`
@@ -193,6 +203,9 @@ parseBuilderLine(const StringSet & defaultSystems, const std::string & line, boo
         isSet(7) ? ensureBase64(7) : "",
         // `useSshNgForRemoteBuilds` (the schemeless-default transport, not a column)
         useSshNgForRemoteBuilds};
+    // `isElastic` (column #9): a non-constructor field, set after the fact.
+    machine.isElastic = isSet(8) && parseBoolField(8);
+    return machine;
 }
 
 static Machines parseBuilderLines(

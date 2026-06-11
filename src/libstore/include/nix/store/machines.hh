@@ -26,6 +26,14 @@ struct Machine
     bool enabled = true;
 
     /**
+     * Whether this builder schedules its own work (elastic/autoscaling):
+     * `maxJobs` becomes a load-balancing hint rather than a hard cap.
+     * Strictly opt-in, so existing machine files are never silently
+     * overcommitted.
+     */
+    bool isElastic = false;
+
+    /**
      * @return Whether `system` is either `"builtin"` or in
      * `systemTypes`.
      */

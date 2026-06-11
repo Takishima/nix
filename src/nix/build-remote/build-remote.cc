@@ -225,6 +225,25 @@ static int main_build_remote(int argc, char ** argv)
                                 ++load;
                             }
                         }
+                        /* For a self-scheduling builder, take an overflow slot rather
+                           than postponing; the slot still records load so sibling
+                           hook runs keep balancing across machines. */
+                        if (!free && m.isElastic) {
+                            for (uint64_t slot = m.maxJobs;; ++slot) {
+                                auto slotLock = openSlotLock(m, slot);
+                                if (lockFile(slotLock.get(), ltWrite, false)) {
+                                    free = std::move(slotLock);
+                                    break;
+                                } else {
+                                    /* An occupied overflow slot is still load:
+                                       count it so a saturated elastic machine
+                                       reports maxJobs + overflow depth, and
+                                       sibling hook runs keep balancing across
+                                       machines instead of piling onto one. */
+                                    ++load;
+                                }
+                            }
+                        }
                         if (!free) {
                             continue;
                         }

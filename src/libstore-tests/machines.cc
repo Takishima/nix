@@ -160,6 +160,27 @@ TEST(machines, getMachinesWithCorrectCompleteSingleBuilder)
     EXPECT_THAT(actual[0], Field(&Machine::sshPublicHostKey, Eq("SSH+HOST+PUBLIC+KEY+BASE64+ENCODED==")));
 }
 
+TEST(machines, getMachinesElasticDefaultsOff)
+{
+    auto actual = Machine::parseConfig({"TEST_ARCH-TEST_OS"}, "nix@scratchy.labs.cs.uu.nl - - 8 3 kvm benchmark -");
+    ASSERT_THAT(actual, SizeIs(1));
+    EXPECT_THAT(actual[0], Field(&Machine::isElastic, Eq(false)));
+}
+
+TEST(machines, getMachinesElasticFlag)
+{
+    auto actual =
+        Machine::parseConfig({"TEST_ARCH-TEST_OS"}, "nix@scratchy.labs.cs.uu.nl - - 8 3 kvm benchmark - true");
+    ASSERT_THAT(actual, SizeIs(1));
+    EXPECT_THAT(actual[0], Field(&Machine::maxJobs, Eq(8)));
+    EXPECT_THAT(actual[0], Field(&Machine::isElastic, Eq(true)));
+}
+
+TEST(machines, getMachinesElasticBadFlag)
+{
+    EXPECT_THROW(Machine::parseConfig({}, "nix@scratchy.labs.cs.uu.nl - - 8 - - - - yes"), FormatError);
+}
+
 TEST(machines, getMachinesWithCorrectCompleteSingleBuilderWithTabColumnDelimiter)
 {
     auto actual = Machine::parseConfig(
