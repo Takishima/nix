@@ -224,9 +224,8 @@ std::string coordinatorSocketPath(Store & store)
     return (settings.nixStateDir / "coordinator.socket").string();
 }
 
-/** The connecting peer's authenticated identity (its uid via peer-cred) — the
- *  pluggable-auth seam; peer-cred here, mTLS/identity in a network control
- *  plane. `nullopt` when it cannot be established. */
+/** The connecting peer's authenticated identity (its uid via peer-cred);
+ *  `nullopt` when it cannot be established. */
 std::optional<uid_t> getPeerUid(int fd)
 {
 #ifdef SO_PEERCRED
@@ -359,20 +358,15 @@ struct Coordinator
         uint64_t buildMode, trusted, replayWanted;
         src >> buildMode >> trusted >> replayWanted;
 
-        // The registry never trusts a client-asserted key (I2): compute the
-        // key from the derivation we actually *received* (`computeStorePath`
-        // derives the canonical store path of those bytes without writing
-        // them), so a forged path in START_OR_ATTACH cannot collide with — or
-        // attach to — the build of a different derivation. The asserted path
-        // is still the one the build child realises: for a trusted daemon
-        // relay it is the original drv path, which for an input-addressed
-        // derivation need not equal the canonical path of its
-        // `BasicDerivation` projection (the `inputDrvs` are not part of what
-        // is sent), and identical received bytes still coalesce either way.
-        // DEFERRED for the cross-user coordinator: a real multi-tenant
-        // BuildAuthPolicy (replacing the single-identity gate below) is to be
-        // designed together with the trust model before the experimental gate
-        // is widened beyond one user.
+        // Never trust a client-asserted key: compute it from the derivation
+        // we actually *received* (`computeStorePath` derives the canonical
+        // store path of those bytes without writing them), so a forged path
+        // in START_OR_ATTACH cannot collide with — or attach to — the build
+        // of a different derivation. The asserted path is still the one the
+        // build child realises: for an input-addressed derivation it need not
+        // equal the canonical path of its `BasicDerivation` projection (the
+        // `inputDrvs` are not part of what is sent), and identical received
+        // bytes still coalesce either way.
         Derivation keyDrv;
         static_cast<BasicDerivation &>(keyDrv) = drv;
         BuildRegistryKey key{parseStore->printStorePath(computeStorePath(*parseStore, keyDrv))};
@@ -838,9 +832,9 @@ BuildResult processCoordinatorRelayRecords(
 {
     CoordinatorRelayPump pump(logger, drvPathStr);
     while (auto rec = readRecord()) {
-        // Re-frame the body with its length prefix, so the record-level seam
-        // the unit tests drive exercises the same incremental decoder the
-        // event-loop path uses.
+        // Re-frame the body with its length prefix, so this record-level
+        // entry point exercises the same incremental decoder the event-loop
+        // path uses.
         uint32_t len = (uint32_t) rec->size();
         std::string framed;
         framed.resize(4);

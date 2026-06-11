@@ -154,7 +154,7 @@ TEST(BuildRegistry, lateJoinerReplaysThenFollowsLiveTail)
     reg->log(key("k"), "early2\n");
 
     // Late joiner: replays the buffer (replayed=true), then follows the live
-    // tail with no gap/dup at the seam.
+    // tail with nothing missed or duplicated at the handover.
     Recorder b;
     SubscribeOptions opts{.replayWanted = true};
     auto rb = reg->startOrAttach(auth, key("k"), b.logSink(), b.resultSink(), opts);

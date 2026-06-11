@@ -188,8 +188,8 @@ public:
 
         // Replay the buffered log to the late joiner, then it follows the live
         // tail (registered above). Single-threaded: no frame can arrive between
-        // the snapshot and the live registration, so there is no gap/dup at the
-        // seam.
+        // the snapshot and the live registration, so nothing is missed or
+        // duplicated at the handover.
         if (deduplicated && opts.replayWanted && liveSink)
             for (auto & frame : build->replay.snapshot())
                 liveSink(frame);

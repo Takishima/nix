@@ -1,14 +1,14 @@
-// Golden / back-compat characterisation of the CANDIDATE serve 2.9 "diagnostic
+// Golden / back-compat characterisation of the candidate serve 2.9 "diagnostic
 // core" layout: logRef, failurePhase, exitCode, logTail appended after the 2.8
 // `builtOutputs` block under a `>= {2,9}` guard, plus QueryBuildLog as
 // Command = 10.
 //
-// The production serializers (src/libstore/{serve,worker}-protocol.cc) now carry
+// The production serializers (src/libstore/{serve,worker}-protocol.cc) carry
 // this layout, but only behind the unstable gate and WITHOUT bumping
-// SERVE_PROTOCOL_VERSION — reachable for the soak, not yet a back-compat promise.
-// This file is a self-contained model of the same version-gated byte ladder, so
-// the goldens fail on any accidental drift while the layout soaks. Once the
-// version is bumped at freeze, the production fixtures take over and this model
+// SERVE_PROTOCOL_VERSION — i.e. it is not yet a back-compat promise. This file
+// is a self-contained model of the same version-gated byte ladder, so the
+// goldens fail on any accidental drift while the layout is still unstable.
+// Once the version is bumped, the production fixtures take over and this model
 // is deleted.
 
 #include <gtest/gtest.h>
@@ -27,14 +27,13 @@
 // `SERVE_PROTOCOL_VERSION` (a macro) is borrowed from the real header.
 namespace serve_diag_core_test {
 
-// The whole point of staying unbumped: this port lands as test code *without*
-// advancing the wire version. If someone bumps the real version, this assert
-// fires and forces them through the freeze checklist (and to retarget these
+// If someone bumps the real version, this assert fires and forces them to
+// decide deliberately that the 2.9 layout is final (and to retarget these
 // goldens at the production serializer).
 static_assert(
     SERVE_PROTOCOL_VERSION == (2 << 8 | 8),
-    "serve diagnostic core is still pre-freeze; SERVE_PROTOCOL_VERSION must stay 2.8 "
-    "until the layout is frozen");
+    "the serve diagnostic-core layout is not frozen; SERVE_PROTOCOL_VERSION must stay 2.8 "
+    "until it is");
 
 namespace {
 
@@ -336,8 +335,8 @@ std::string ser(Version v, const BuildResult & r)
     return s.buf;
 }
 
-// Golden bytes for the candidate layout; the characterisation guard against
-// accidental layout drift while the layout soaks.
+// Golden bytes for the candidate layout: a characterisation guard against
+// accidental drift while the layout is still unstable.
 constexpr std::string_view GOLD_2_3 =
     "04000000000000000e000000000000006275696c646572206661696c6564000002000000000000000100000000000000e8030000000000001204000000000000";
 constexpr std::string_view GOLD_2_6 =
@@ -447,9 +446,9 @@ TEST(ServeDiagCore, backCompatMatrixBothDirections)
         << "new <-> new: negotiate 2.9, full diagnostic core active";
 }
 
-// 6b. The compatibility correction: the client handshake
-//     guard runs BEFORE min(), so a MAJOR bump is not protected by additivity.
-//     This is the regression the earlier (3<<8|0) plan would have shipped.
+// 6b. The client handshake guard runs BEFORE min(), so a MAJOR bump is not
+//     protected by additivity: a {3,0} server would break every deployed
+//     client. That is why the diagnostic core ships as {2,9}, not {3,0}.
 TEST(ServeDiagCore, majorBumpRejectedByClientGuardBeforeMin)
 {
     EXPECT_FALSE(clientAcceptsServer(V3_0))

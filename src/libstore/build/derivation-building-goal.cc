@@ -1292,7 +1292,7 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
             Magenta(worker.store.printStorePath(drvPath)),
             statusToString(e.builderStatus));
 
-    /* Surface the §4.4 classification to the user, not only on the wire: it
+    /* Surface the classification to the user, not only on the wire: it
        is the difference between "fix the derivation" and "retry with more
        memory". */
     if (buildResult.killedForMemory) {

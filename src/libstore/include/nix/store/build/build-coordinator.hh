@@ -7,13 +7,9 @@
 /// per-store **coordinator process** that owns the `BuildRegistry`, runs the
 /// real builds, and fans their log out to every attached daemon child.
 ///
-/// **Expand/contract.** This lands as a *parallel change*: the relay is an
-/// additive, env-gated branch in the daemon's `BuildDerivation` handler
-/// (`NIX_BUILD_COORDINATOR_SOCKET`); the existing in-process build path is the
-/// untouched default. The planned *contraction* — once the coordinator is the
-/// proven default for daemons fronting one — is to promote it behind a real
-/// experimental feature, collapse the gate, and retire the duplicated
-/// direct-build branch. Until then nothing existing is removed.
+/// The relay is an additive, feature-gated branch in the daemon's
+/// `BuildDerivation` handler; the existing in-process build path is the
+/// untouched default.
 ///
 /// Everything here is **below the client wire** (the daemon child still speaks
 /// ordinary worker-protocol `STDERR_*` to its client via the existing

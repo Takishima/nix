@@ -5,18 +5,16 @@
 /// realisations of the *same resolved derivation* into a single build, fans that
 /// build's log out to every attached session, replays the buffered log to late
 /// joiners, and cancels the build only when its reference count drops to zero
-/// with no durable root. This header is the **interface** (seam 1): operations +
-/// invariants, not a concrete data structure. The v1 in-memory map under a
-/// single event loop (`makeInMemoryBuildRegistry`) is one conforming
-/// implementation; a persistent / sharded / distributed store is a drop-in (the
-/// operations are deliberately lease/CAS-shaped, seam 2).
+/// with no durable root. This header is the interface: operations + invariants,
+/// not a concrete data structure. The in-memory map under a single event loop
+/// (`makeInMemoryBuildRegistry`) is one conforming implementation; the
+/// operations are deliberately lease/CAS-shaped so that a persistent or
+/// distributed implementation can be dropped in without touching callers.
 ///
-/// **Where it lives.** For single-process backends (a single `RemoteStore`
-/// driver, an in-address-space service) this registry lives in process memory
-/// and is the whole mechanism. For the stock fork-per-connection `nix-daemon` it
-/// is hosted by the per-store **coordinator**; the registry interface is
-/// identical either way — coordination is written against the registry
-/// interface, not its transport.
+/// For single-process backends this registry lives in process memory and is the
+/// whole mechanism. For the stock fork-per-connection `nix-daemon` it is hosted
+/// by the per-store **coordinator** process; coordination is written against
+/// the registry interface, not its transport.
 
 #include <cstdint>
 #include <ctime>
@@ -192,13 +190,12 @@ struct SubscriptionId
 };
 
 /**
- * A monotonic fencing token for a key's live build (seam 2). v1 gets
- * atomicity for free from its single event loop, but the operations are written
- * as if backed by compare-and-swap + a lease: a future persistent/distributed
- * registry expresses "who is building `K`, recover safely if they vanish" by
- * renewing the lease while building and **fencing** it (bumping the epoch) when
- * the build dies — without touching callers. Each (re)creation of a key bumps
- * the epoch, so a stale handle can detect it was fenced.
+ * A monotonic fencing token for a key's live build. The in-memory registry
+ * gets atomicity for free from its single event loop, but the operations are
+ * written as if backed by compare-and-swap + a lease, so a persistent or
+ * distributed registry can express "who is building `K`, recover safely if
+ * they vanish" without touching callers. Each (re)creation of a key bumps the
+ * epoch, so a stale handle can detect it was fenced.
  */
 struct BuildLease
 {
@@ -225,7 +222,7 @@ struct BuildAttachment
      *  started it is the one that must drive it (call `log`/`finish`). */
     bool started = false;
 
-    /** The live lease for the key (seam 2). */
+    /** The live lease for the key. */
     BuildLease lease;
 };
 
@@ -243,7 +240,7 @@ struct ActiveBuildStatus
 };
 
 /**
- * The Build Registry interface (seam 1).
+ * The Build Registry interface.
  *
  * **Invariant:** at most one live build per key per coordination domain, with
  * `startOrAttach` (lookup-and-create) atomic with respect to the key.
@@ -326,7 +323,7 @@ struct BuildRegistry
      *  `QueryActiveBuilds` privacy default is the caller's. */
     virtual std::vector<ActiveBuildStatus> queryActive(const BuildAuth & auth) const = 0;
 
-    /** Whether `key` currently has a live build (test / introspection seam). */
+    /** Whether `key` currently has a live build (for tests / introspection). */
     virtual bool isLive(const BuildRegistryKey & key) const = 0;
 };
 
@@ -343,7 +340,7 @@ struct ReplayBufferCaps
 };
 
 /**
- * Construct the v1 **in-memory** Build Registry: an in-process map under a
+ * Construct the **in-memory** Build Registry: an in-process map under a
  * single (caller-provided) event loop, with replay buffers in process
  * memory. This is the registry used directly by single-process backends
  * and hosted by the coordinator for the stock daemon. `policy` must outlive the

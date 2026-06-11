@@ -292,9 +292,8 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
 
             This offers a provisional serve protocol version 2.9 with a
             `QueryBuildLog` operation. The 2.9 wire layout is **not** yet a
-            back-compat promise (`SERVE_PROTOCOL_VERSION` stays at 2.8); it is
-            gated here until the freeze criteria for the serve diagnostic core
-            are met.
+            back-compat promise (`SERVE_PROTOCOL_VERSION` stays at 2.8); it
+            stays gated here until the layout is frozen.
         )",
         .trackingUrl = "https://github.com/NixOS/nix/milestone/55",
     },

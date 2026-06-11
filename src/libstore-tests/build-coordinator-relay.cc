@@ -13,8 +13,8 @@ namespace nix {
 
 namespace {
 
-/* Coordinator records as the coordinator frames them (tag byte + payload; the
-   length prefix is below the `readRecord` seam). */
+/* Coordinator records as the coordinator frames them (tag byte + payload;
+   `readRecord` strips the length prefix before the records get here). */
 
 std::string frameRec(std::string_view data)
 {
