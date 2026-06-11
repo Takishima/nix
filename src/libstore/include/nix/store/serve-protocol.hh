@@ -73,6 +73,32 @@ struct ServeProto
     };
 
     /**
+     * The provisional serve version carrying the diagnostic extensions.
+     * Its byte layout is **not** a back-compat promise: it is offered only
+     * under the `serve-build-logs` experimental feature, and `latest`
+     * deliberately stays at 2.8 until the layout is frozen.
+     */
+    static constexpr Version unstableDiagnostics = {
+        .major = 2,
+        .minor = 9,
+    };
+
+    /**
+     * The version offered in the serve handshake: `unstableDiagnostics`
+     * under the `serve-build-logs` feature, otherwise `latest`.
+     */
+    static Version offeredVersion();
+
+    /**
+     * Whether the negotiated version supports the diagnostic extensions
+     * (`QueryBuildLog` and friends).
+     */
+    static constexpr bool supportsDiagnostics(Version negotiated)
+    {
+        return negotiated >= unstableDiagnostics;
+    }
+
+    /**
      * A unidirectional read connection, to be used by the read half of the
      * canonical serializers below.
      */

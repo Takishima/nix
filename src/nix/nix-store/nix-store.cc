@@ -891,7 +891,8 @@ static void opServe(Strings opFlags, Strings opArgs)
     FdSink out(getStandardOutput());
 
     /* Exchange the greeting. */
-    ServeProto::Version clientVersion = ServeProto::BasicServerConnection::handshake(out, in, ServeProto::latest);
+    ServeProto::Version clientVersion =
+        ServeProto::BasicServerConnection::handshake(out, in, ServeProto::offeredVersion());
 
     ServeProto::ReadConn rconn{
         .from = in,

@@ -76,8 +76,8 @@ ref<LegacySSHStore::Connection> LegacySSHStore::openConnection()
     StringSink saved;
     TeeSource tee(conn->from, saved);
     try {
-        conn->remoteVersion =
-            ServeProto::BasicClientConnection::handshake(conn->to, tee, ServeProto::latest, config->authority.host);
+        conn->remoteVersion = ServeProto::BasicClientConnection::handshake(
+            conn->to, tee, ServeProto::offeredVersion(), config->authority.host);
     } catch (SerialisationError & e) {
         // in.close(): Don't let the remote block on us not writing.
         conn->sshConn->in.close();

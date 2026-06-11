@@ -2,8 +2,17 @@
 #include "nix/store/serve-protocol-impl.hh"
 #include "nix/store/build-result.hh"
 #include "nix/store/derivations.hh"
+#include "nix/util/experimental-features.hh"
 
 namespace nix {
+
+ServeProto::Version ServeProto::offeredVersion()
+{
+    // 2.9 is offered only under the experimental feature; the `min()`
+    // handshake degrades transparently for peers that do not offer it.
+    return experimentalFeatureSettings.isEnabled(Xp::ServeBuildLogs) ? ServeProto::unstableDiagnostics
+                                                                     : ServeProto::latest;
+}
 
 ServeProto::Version ServeProto::BasicClientConnection::handshake(
     BufferedSink & to, Source & from, ServeProto::Version localVersion, std::string_view host)
