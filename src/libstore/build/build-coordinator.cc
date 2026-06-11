@@ -573,12 +573,39 @@ struct Coordinator
                 else if (running.count(fd))
                     buildReadable.push_back(fd);
             }
+            /* A malformed record (e.g. an oversized length prefix) must only
+               take down the connection or build it arrived on, never the
+               coordinator — that would kill every other in-flight build. */
             for (int fd : buildReadable)
                 if (running.count(fd))
-                    onBuildPipeReadable(fd);
+                    try {
+                        onBuildPipeReadable(fd);
+                    } catch (std::exception & e) {
+                        printError("coordinator: bad record from build child: %s", e.what());
+                        auto it = running.find(fd);
+                        if (it != running.end()) {
+                            if (!it->second.gotResult) {
+                                BuildResult res;
+                                res.inner = BuildResult::Failure{{
+                                    .status = BuildResult::Failure::MiscFailure,
+                                    .msg = HintFmt("build child sent a malformed record"),
+                                }};
+                                registry->finish(it->second.key, res);
+                            }
+                            if (it->second.pid > 0)
+                                ::kill(it->second.pid, SIGKILL);
+                            reap(it->second.pid);
+                            running.erase(it);
+                        }
+                    }
             for (int fd : connReadable)
                 if (conns.count(fd))
-                    onConnReadable(fd);
+                    try {
+                        onConnReadable(fd);
+                    } catch (std::exception & e) {
+                        printError("coordinator: dropping client connection: %s", e.what());
+                        dropConn(fd);
+                    }
 
             // Close finished connections.
             for (auto it = conns.begin(); it != conns.end();) {
