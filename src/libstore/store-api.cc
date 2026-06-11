@@ -1136,6 +1136,27 @@ void copyClosure(
     copyPaths(srcStore, dstStore, closure, repair, checkSigs, substitute);
 }
 
+void Store::copyDrvsFromEvalStore(
+    const std::vector<DerivedPath> & paths, std::shared_ptr<Store> evalStore, bool includeOutputs)
+{
+    if (evalStore && evalStore.get() != this) {
+        /* The remote doesn't have a way to access evalStore, so copy
+           the .drvs. */
+        RealisedPath::Set drvPaths2;
+        for (const auto & i : paths) {
+            std::visit(
+                overloaded{
+                    [&](const DerivedPath::Opaque & bp) {
+                        // Do nothing, path is hopefully there already
+                    },
+                    [&](const DerivedPath::Built & bp) { drvPaths2.insert(bp.drvPath->getBaseStorePath()); },
+                },
+                i.raw());
+        }
+        copyClosure(*evalStore, *this, drvPaths2, NoRepair, CheckSigs, NoSubstitute, includeOutputs);
+    }
+}
+
 std::optional<ValidPathInfo>
 decodeValidPathInfo(const Store & store, std::istream & str, std::optional<HashResult> hashGiven)
 {

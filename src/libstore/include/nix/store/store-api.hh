@@ -1095,6 +1095,16 @@ protected:
     {
         throw Unsupported("operation '%s' is not supported by store '%s'", op, config.getHumanReadableURI());
     }
+
+    /**
+     * Helper for `buildPaths()` overrides that forward to a remote with
+     * no access to the eval store: copy the requested derivations'
+     * closures from `evalStore` into this store. With `includeOutputs`,
+     * input outputs already valid in `evalStore` are copied along, for
+     * remotes that cannot realise the inputs themselves.
+     */
+    void copyDrvsFromEvalStore(
+        const std::vector<DerivedPath> & paths, std::shared_ptr<Store> evalStore, bool includeOutputs = false);
 };
 
 /**
