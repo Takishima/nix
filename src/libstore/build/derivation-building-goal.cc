@@ -804,7 +804,18 @@ Goal::Co DerivationBuildingGoal::buildWithHook(
 
     /* Check the exit status. */
     if (!statusOk(status)) {
-        auto e = fixupBuilderFailureErrorMessage({BuildResult::Failure::MiscFailure, status, ""}, *buildLog);
+        /* `status` is the *hook's* exit status, not the remote builder's;
+           `fixupBuilderFailureErrorMessage` would misattribute it. The hook
+           already rendered the real remote failure on its stderr. */
+        buildLog->act->result(resBuildResult, (uint64_t) 1);
+        buildLog->flush();
+
+        auto e = BuildError(
+            BuildResult::Failure::MiscFailure,
+            "Cannot build '%s'.\nReason: " ANSI_RED "the build hook %s" ANSI_NORMAL
+            "; the remote failure is reported above.",
+            Magenta(worker.store.printStorePath(drvPath)),
+            statusToString(status));
 
         outputLocks.unlock();
 

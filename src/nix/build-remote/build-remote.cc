@@ -16,7 +16,9 @@
 #include "nix/store/pathlocks.hh"
 #include "nix/store/globals.hh"
 #include "nix/util/serialise.hh"
+#include "nix/util/strings.hh"
 #include "nix/store/build-result.hh"
+#include "nix/store/log-store.hh"
 #include "nix/store/store-open.hh"
 #include "nix/util/strings.hh"
 #include "nix/store/derivations.hh"
@@ -48,6 +50,51 @@ static bool allSupportedLocally(Store & store, const StringSet & requiredFeature
         if (!store.config.systemFeatures.get().count(feature))
             return false;
     return true;
+}
+
+/**
+ * Best-effort tail of the remote build log plus a `nix log` hint, to
+ * append to the failure message. Never throws: surfacing the log must
+ * not mask the build failure itself.
+ */
+static std::string renderRemoteBuildLogTail(
+    Store & remoteStore,
+    Store & localStore,
+    const StorePath & drvPath,
+    std::string_view storeUri,
+    const BuildResult & result)
+{
+    constexpr size_t maxLines = 25;
+    try {
+        /* A logTail-carrying failure message already shows the tail; only
+           add what the remote could not know — the `--store` log hint. */
+        if (!result.logTail.empty())
+            return fmt(
+                "\nFor full logs, run:\n  " ANSI_BOLD "nix log --store '%s' '%s'" ANSI_NORMAL,
+                storeUri,
+                localStore.printStorePath(drvPath));
+
+        std::optional<std::string> log;
+        if (auto * logStore = dynamic_cast<LogStore *>(&remoteStore))
+            log = logStore->getBuildLogExact(drvPath);
+        if (!log || log->empty())
+            return "";
+
+        auto lines = splitString<std::vector<std::string>>(chomp(*log), "\n");
+        size_t n = std::min(maxLines, lines.size());
+
+        std::string msg = fmt("\nLast %d log lines:\n", n);
+        for (auto it = lines.end() - n; it != lines.end(); ++it)
+            msg += "> " + *it + "\n";
+        // On its own line for easy copying (triple-click).
+        msg +=
+            fmt("For full logs, run:\n  " ANSI_BOLD "nix log --store '%s' '%s'" ANSI_NORMAL,
+                storeUri,
+                localStore.printStorePath(drvPath));
+        return msg;
+    } catch (...) {
+        return "";
+    }
 }
 
 static int main_build_remote(int argc, char ** argv)
@@ -349,7 +396,11 @@ static int main_build_remote(int argc, char ** argv)
                             : "");
                 }
                 throw Error(
-                    "build of '%s' on '%s' failed: %s", store->printStorePath(*drvPath), storeUri, failureP->message());
+                    "build of '%s' on '%s' failed: %s%s",
+                    store->printStorePath(*drvPath),
+                    storeUri,
+                    failureP->message(),
+                    renderRemoteBuildLogTail(*sshStore, *store, *drvPath, storeUri, result));
             }
         } else {
             copyClosure(*store, *sshStore, StorePathSet{*drvPath}, NoRepair, NoCheckSigs, substitute);
