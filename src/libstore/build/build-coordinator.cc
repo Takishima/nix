@@ -14,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/file.h>
@@ -61,6 +62,35 @@ bool readN(int fd, char * buf, size_t n)
  *  START_OR_ATTACH carries one resolved derivation; log frames are line-sized.
  *  256 MiB is far above any legitimate record. */
 constexpr uint32_t maxRecordLen = 256u << 20;
+
+/** Cap on bytes queued towards one subscriber. The registry's sinks must not
+ *  block, so writes are buffered; a subscriber that stops reading past this
+ *  cap is dropped like a hangup rather than stalling every other client. */
+constexpr size_t maxConnOutBuf = 64u << 20;
+
+/** Pop one complete length-prefixed record off the front of `buf`, if a
+ *  complete one has arrived. Throws on an oversized length prefix. */
+std::optional<std::string> popRecord(std::string & buf)
+{
+    if (buf.size() < 4)
+        return std::nullopt;
+    uint32_t len;
+    memcpy(&len, buf.data(), 4);
+    if (len > maxRecordLen)
+        throw Error("coordinator control record too large (%d bytes)", len);
+    if (buf.size() < 4 + (size_t) len)
+        return std::nullopt;
+    std::string rec = buf.substr(4, len);
+    buf.erase(0, 4 + (size_t) len);
+    return rec;
+}
+
+void makeNonBlocking(int fd)
+{
+    int flags = fcntl(fd, F_GETFL);
+    if (flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+        throw SysError("making coordinator fd non-blocking");
+}
 
 /** Read one length-prefixed record; nullopt on clean EOF. */
 std::optional<std::string> readRecord(int fd)
@@ -253,16 +283,24 @@ struct Coordinator
 
     std::unique_ptr<BuildRegistry> registry = makeInMemoryBuildRegistry(policy);
 
-    /** A connected daemon child = one subscription. */
+    /** A connected daemon child = one subscription. All I/O on the socket is
+     *  non-blocking: inbound bytes assemble in `inBuf` until a record
+     *  completes, outbound records queue in `outBuf` and drain as the socket
+     *  accepts them — so no peer can stall the loop in either direction. */
     struct Conn
     {
         AutoCloseFD fd;
         bool started = false; // sent START_OR_ATTACH yet?
-        bool done = false;    // result delivered; close after flush
+        bool done = false;    // result delivered; close once outBuf drains
+        /** Hung up, errored, violated the protocol or overflowed `outBuf`:
+         *  unsubscribed (if subscribed) and closed at the end of the loop
+         *  iteration. */
+        bool dead = false;
         SubscriptionId sub;
-        BuildRegistryKey key;
         /** The peer's authenticated identity (uid via peer-cred at accept). */
         std::string identity;
+        std::string inBuf;
+        std::string outBuf;
     };
 
     /** A running build = the registry MISS that started it. */
@@ -272,6 +310,7 @@ struct Coordinator
         pid_t pid = -1;
         BuildRegistryKey key;
         bool gotResult = false;
+        std::string inBuf;
     };
 
     std::map<int, Conn> conns;      // by control-socket fd
@@ -295,6 +334,42 @@ struct Coordinator
         , electionLock(std::move(electionLock))
         , listenFd(std::move(listenFd))
     {
+        makeNonBlocking(this->listenFd.get());
+    }
+
+    /** Queue a record towards a connection; the poll loop drains it. A
+     *  subscriber whose queue would overflow is marked dead (dropped like a
+     *  hangup) instead of stalling the loop or buffering unboundedly. */
+    void enqueue(Conn & conn, std::string_view body)
+    {
+        if (conn.dead)
+            return;
+        if (conn.outBuf.size() + 4 + body.size() > maxConnOutBuf) {
+            conn.dead = true;
+            return;
+        }
+        uint32_t len = (uint32_t) body.size();
+        char lenBuf[4];
+        memcpy(lenBuf, &len, 4);
+        conn.outBuf.append(lenBuf, 4);
+        conn.outBuf.append(body);
+    }
+
+    /** Write as much of `outBuf` as the socket will take without blocking. */
+    void flushConn(Conn & conn)
+    {
+        while (!conn.outBuf.empty() && !conn.dead) {
+            ssize_t n = ::write(conn.fd.get(), conn.outBuf.data(), conn.outBuf.size());
+            if (n > 0) {
+                conn.outBuf.erase(0, n);
+                continue;
+            }
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                return; // wait for POLLOUT
+            conn.dead = true; // peer gone (EPIPE etc.)
+        }
     }
 
     /** Fork a build child that runs the resolved derivation and frames its log
@@ -356,6 +431,7 @@ struct Coordinator
         r.pid = pid;
         r.key = key;
         int rfd = pipe.readSide.get();
+        makeNonBlocking(rfd);
         r.pipe = std::move(pipe.readSide);
         running.emplace(rfd, std::move(r));
     }
@@ -387,23 +463,19 @@ struct Coordinator
         Derivation keyDrv;
         static_cast<BasicDerivation &>(keyDrv) = drv;
         BuildRegistryKey key{parseStore->printStorePath(computeStorePath(*parseStore, keyDrv))};
-        conn.key = key;
 
-        // Fan-out sinks write straight down this child's control socket; the
-        // child relays the bytes verbatim to its client (public wire unchanged).
+        // Fan-out sinks only queue onto this child's connection (the child
+        // relays the bytes verbatim to its client — public wire unchanged);
+        // the poll loop does the actual writing, so the sinks never block.
         BuildLogSink liveSink = [this, connFd](const BuildLogFrame & f) {
-            try {
-                writeRecord(connFd, frameRecord(f.replayed, f.data));
-            } catch (...) {
-            }
+            if (auto it = conns.find(connFd); it != conns.end())
+                enqueue(it->second, frameRecord(f.replayed, f.data));
         };
         BuildResultSink resultSink = [this, connFd](const BuildResult & r) {
-            try {
-                writeRecord(connFd, resultRecord(r));
-            } catch (...) {
-            }
-            if (auto it = conns.find(connFd); it != conns.end())
+            if (auto it = conns.find(connFd); it != conns.end()) {
+                enqueue(it->second, resultRecord(r));
                 it->second.done = true;
+            }
         };
 
         // Authorize the *peer's* authenticated identity (peer-cred at accept),
@@ -432,11 +504,9 @@ struct Coordinator
         // peer-cred at accept established the caller's identity; the registry
         // filters to builds it may observe (under the single-identity policy,
         // only the coordinator's own identity observes anything).
-        BuildAuth auth{.identity = conns.at(connFd).identity, .trusted = false};
-        try {
-            writeRecord(connFd, activeRecord(registry->queryActive(auth)));
-        } catch (...) {
-        }
+        auto & conn = conns.at(connFd);
+        BuildAuth auth{.identity = conn.identity, .trusted = false};
+        enqueue(conn, activeRecord(registry->queryActive(auth)));
     }
 
     /** Registry asked us to cancel `key`'s build (refcount 0, no root). */
@@ -449,84 +519,113 @@ struct Coordinator
             }
     }
 
-    void onBuildPipeReadable(int rfd)
+    void handleBuildRecord(Running & r, const std::string & rec)
     {
-        auto rec = readRecord(rfd);
-        auto it = running.find(rfd);
-        if (it == running.end())
+        if (rec.empty())
             return;
-        if (!rec) { // pipe EOF
-            if (!it->second.gotResult) {
-                BuildResult res;
-                res.inner = BuildResult::Failure{{
-                    .status = BuildResult::Failure::MiscFailure,
-                    .msg = HintFmt("build child exited without a result"),
-                }};
-                registry->finish(it->second.key, res);
-            }
-            reap(it->second.pid);
-            running.erase(it);
-            return;
-        }
-        if (rec->empty())
-            return;
-        char tag = (*rec)[0];
+        char tag = rec[0];
         if (tag == MSG_FRAME) {
-            bool replayed = rec->size() > 1 && (*rec)[1] != 0;
-            (void) replayed; // live build frames are not replayed
-            registry->log(it->second.key, std::string_view(*rec).substr(2));
+            registry->log(r.key, std::string_view(rec).substr(2));
         } else if (tag == MSG_RESULT) {
-            auto res = nlohmann::json::parse(rec->substr(1)).get<BuildResult>();
-            it->second.gotResult = true;
-            registry->finish(it->second.key, res);
+            auto res = nlohmann::json::parse(rec.substr(1)).get<BuildResult>();
+            r.gotResult = true;
+            registry->finish(r.key, res);
         }
     }
 
+    /** Drain whatever the build child's pipe has, without blocking; complete
+     *  records are dispatched, a partial one waits in `inBuf`. */
+    void onBuildPipeReadable(int rfd)
+    {
+        auto & r = running.at(rfd);
+        char buf[65536];
+        while (true) {
+            ssize_t n = ::read(rfd, buf, sizeof(buf));
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    return;
+                throw SysError("reading from build child pipe");
+            }
+            if (n == 0) { // pipe EOF: the child is gone
+                if (!r.gotResult) {
+                    BuildResult res;
+                    res.inner = BuildResult::Failure{{
+                        .status = BuildResult::Failure::MiscFailure,
+                        .msg = HintFmt("build child exited without a result"),
+                    }};
+                    registry->finish(r.key, res);
+                }
+                reap(r.pid);
+                running.erase(rfd);
+                return;
+            }
+            r.inBuf.append(buf, n);
+            while (auto rec = popRecord(r.inBuf))
+                handleBuildRecord(r, *rec);
+        }
+    }
+
+    void dispatchConnRecord(int connFd, const std::string & rec)
+    {
+        auto & conn = conns.at(connFd);
+        if (rec.empty()) {
+            conn.dead = true;
+            return;
+        }
+        char tag = rec[0];
+        if (tag == MSG_QUERY_ACTIVE) {
+            // A query connection never becomes a subscriber, so it takes no
+            // refcount: answer and close.
+            handleQueryActive(connFd);
+            conn.done = true;
+            return;
+        }
+        if (tag != MSG_START_OR_ATTACH) {
+            conn.dead = true;
+            return;
+        }
+        try {
+            handleStartOrAttach(connFd, rec);
+        } catch (std::exception & e) {
+            printError("coordinator: bad START_OR_ATTACH: %s", e.what());
+            conn.dead = true;
+        }
+    }
+
+    /** Drain whatever the client socket has, without blocking. Before the
+     *  request, bytes assemble into the one request record; afterwards the
+     *  only meaningful event is EOF = client disconnect → refcounted
+     *  unsubscribe (any other bytes are noise and dropped). */
     void onConnReadable(int connFd)
     {
         auto & conn = conns.at(connFd);
-        if (!conn.started) {
-            auto rec = readRecord(connFd);
-            if (!rec || rec->empty()) {
-                dropConn(connFd);
+        char buf[65536];
+        while (!conn.dead) {
+            ssize_t n = ::read(connFd, buf, sizeof(buf));
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    return;
+                conn.dead = true;
                 return;
             }
-            char tag = (*rec)[0];
-            if (tag == MSG_QUERY_ACTIVE) {
-                // A query connection never becomes a subscriber, so it takes no
-                // refcount: answer and close.
-                handleQueryActive(connFd);
-                conn.done = true;
+            if (n == 0) {
+                conn.dead = true;
                 return;
             }
-            if (tag != MSG_START_OR_ATTACH) {
-                dropConn(connFd);
-                return;
+            if (conn.started || conn.done)
+                continue; // post-request noise
+            conn.inBuf.append(buf, n);
+            while (!conn.started && !conn.done && !conn.dead) {
+                auto rec = popRecord(conn.inBuf);
+                if (!rec)
+                    break;
+                dispatchConnRecord(connFd, *rec);
             }
-            try {
-                handleStartOrAttach(connFd, *rec);
-            } catch (std::exception & e) {
-                printError("coordinator: bad START_OR_ATTACH: %s", e.what());
-                dropConn(connFd);
-            }
-        } else {
-            // Any readability after subscribing means the child closed = client
-            // disconnect → refcounted unsubscribe.
-            char b;
-            ssize_t r = ::read(connFd, &b, 1);
-            if (r <= 0)
-                dropConn(connFd);
         }
-    }
-
-    void dropConn(int connFd)
-    {
-        auto it = conns.find(connFd);
-        if (it == conns.end())
-            return;
-        if (it->second.started && !it->second.done)
-            registry->unsubscribe(it->second.sub, DetachReason::Hup);
-        conns.erase(it);
     }
 
     void reap(pid_t pid)
@@ -544,8 +643,8 @@ struct Coordinator
         while (true) {
             std::vector<pollfd> fds;
             fds.push_back({listenFd.get(), POLLIN, 0});
-            for (auto & [fd, _] : conns)
-                fds.push_back({fd, POLLIN, 0});
+            for (auto & [fd, c] : conns)
+                fds.push_back({fd, (short) (POLLIN | (c.outBuf.empty() ? 0 : POLLOUT)), 0});
             for (auto & [fd, _] : running)
                 fds.push_back({fd, POLLIN, 0});
 
@@ -565,11 +664,14 @@ struct Coordinator
 
             // Accept first so new work is picked up promptly.
             if (fds[0].revents & POLLIN) {
-                int c = ::accept(listenFd.get(), nullptr, nullptr);
-                if (c >= 0) {
+                while (true) {
+                    int c = ::accept(listenFd.get(), nullptr, nullptr);
+                    if (c < 0)
+                        break;
                     // Same-uid transport gate (defense in depth: the
                     // single-identity registry policy re-checks the identity).
                     if (auto uid = getPeerUid(c); uid && *uid == geteuid()) {
+                        makeNonBlocking(c);
                         Conn conn;
                         conn.fd = AutoCloseFD{c};
                         conn.identity = std::to_string(*uid);
@@ -579,56 +681,64 @@ struct Coordinator
                 }
             }
 
-            // Snapshot fds (handlers mutate the maps).
-            std::vector<int> connReadable, buildReadable;
-            for (size_t i = 1; i < fds.size(); ++i) {
-                if (!(fds[i].revents & (POLLIN | POLLHUP | POLLERR)))
-                    continue;
-                int fd = fds[i].fd;
-                if (conns.count(fd))
-                    connReadable.push_back(fd);
-                else if (running.count(fd))
-                    buildReadable.push_back(fd);
-            }
-            /* A malformed record (e.g. an oversized length prefix) must only
-               take down the connection or build it arrived on, never the
-               coordinator — that would kill every other in-flight build. */
-            for (int fd : buildReadable)
-                if (running.count(fd))
+            /* Snapshot fds: handlers add to `running` (a START_OR_ATTACH
+               miss) and erase from it (pipe EOF); conns are only marked and
+               swept below. A malformed record (e.g. an oversized length
+               prefix) must only take down the connection or build it arrived
+               on, never the coordinator — that would kill every other
+               in-flight build. */
+            std::vector<std::pair<int, short>> events;
+            for (size_t i = 1; i < fds.size(); ++i)
+                if (fds[i].revents)
+                    events.emplace_back(fds[i].fd, fds[i].revents);
+
+            for (auto & [fd, revents] : events) {
+                if (auto it = conns.find(fd); it != conns.end()) {
+                    if (revents & POLLOUT)
+                        flushConn(it->second);
+                    if (revents & (POLLIN | POLLHUP | POLLERR))
+                        try {
+                            onConnReadable(fd);
+                        } catch (std::exception & e) {
+                            printError("coordinator: dropping client connection: %s", e.what());
+                            it->second.dead = true;
+                        }
+                } else if (running.count(fd) && (revents & (POLLIN | POLLHUP | POLLERR))) {
                     try {
                         onBuildPipeReadable(fd);
                     } catch (std::exception & e) {
                         printError("coordinator: bad record from build child: %s", e.what());
-                        auto it = running.find(fd);
-                        if (it != running.end()) {
-                            if (!it->second.gotResult) {
+                        auto rit = running.find(fd);
+                        if (rit != running.end()) {
+                            if (!rit->second.gotResult) {
                                 BuildResult res;
                                 res.inner = BuildResult::Failure{{
                                     .status = BuildResult::Failure::MiscFailure,
                                     .msg = HintFmt("build child sent a malformed record"),
                                 }};
-                                registry->finish(it->second.key, res);
+                                registry->finish(rit->second.key, res);
                             }
-                            if (it->second.pid > 0)
-                                ::kill(it->second.pid, SIGKILL);
-                            reap(it->second.pid);
-                            running.erase(it);
+                            if (rit->second.pid > 0)
+                                ::kill(rit->second.pid, SIGKILL);
+                            reap(rit->second.pid);
+                            running.erase(rit);
                         }
                     }
-            for (int fd : connReadable)
-                if (conns.count(fd))
-                    try {
-                        onConnReadable(fd);
-                    } catch (std::exception & e) {
-                        printError("coordinator: dropping client connection: %s", e.what());
-                        dropConn(fd);
-                    }
+                }
+            }
 
-            // Close finished connections.
+            /* Flush freshly queued output, then sweep: a dead connection is
+               unsubscribed (refcounted, like a hangup) and closed; a done one
+               closes once its queue has drained. */
             for (auto it = conns.begin(); it != conns.end();) {
-                if (it->second.done)
+                auto & c = it->second;
+                if (!c.outBuf.empty() && !c.dead)
+                    flushConn(c);
+                if (c.dead || (c.done && c.outBuf.empty())) {
+                    if (c.started && !c.done)
+                        registry->unsubscribe(c.sub, DetachReason::Hup);
                     it = conns.erase(it);
-                else
+                } else
                     ++it;
             }
         }
