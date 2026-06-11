@@ -66,7 +66,10 @@ struct BuildAuth
     /** An opaque identity token (e.g. a uid string, or a service identity). */
     std::string identity;
 
-    /** Whether the session is a trusted user (the existing daemon notion). */
+    /** Whether the session is a trusted user (the existing daemon notion).
+     *  Only meaningful when the transport authenticated it; on the local
+     *  coordinator socket the peer asserts it itself, so the coordinator
+     *  always passes `false` and no policy may rely on it there. */
     bool trusted = false;
 };
 

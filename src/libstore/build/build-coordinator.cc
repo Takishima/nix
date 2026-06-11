@@ -358,6 +358,9 @@ struct Coordinator
         readDerivation(src, *parseStore, drv, Derivation::nameFromPath(drvPath));
         uint64_t buildMode, trusted, replayWanted;
         src >> buildMode >> trusted >> replayWanted;
+        // `trusted` stays on the wire for layout stability but is
+        // client-asserted, so it must never reach an authorization decision.
+        (void) trusted;
 
         // Never trust a client-asserted key: compute it from the derivation
         // we actually *received* (`computeStorePath` derives the canonical
@@ -392,8 +395,9 @@ struct Coordinator
 
         // Authorize the *peer's* authenticated identity (peer-cred at accept),
         // not our own: under the single-identity policy a foreign peer is
-        // denied uniformly even if the accept gate let it through.
-        BuildAuth auth{.identity = conn.identity, .trusted = trusted != 0};
+        // denied uniformly even if the accept gate let it through. `trusted`
+        // is deliberately not taken from the wire (see above).
+        BuildAuth auth{.identity = conn.identity, .trusted = false};
         SubscribeOptions opts;
         opts.replayWanted = replayWanted != 0;
 
@@ -415,7 +419,7 @@ struct Coordinator
         // peer-cred at accept established the caller's identity; the registry
         // filters to builds it may observe (under the single-identity policy,
         // only the coordinator's own identity observes anything).
-        BuildAuth auth{.identity = conns.at(connFd).identity, .trusted = true};
+        BuildAuth auth{.identity = conns.at(connFd).identity, .trusted = false};
         try {
             writeRecord(connFd, activeRecord(registry->queryActive(auth)));
         } catch (...) {
