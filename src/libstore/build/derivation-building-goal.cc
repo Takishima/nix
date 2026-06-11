@@ -20,6 +20,10 @@
 
 #include <algorithm>
 #include <sys/types.h>
+#ifndef _WIN32
+#  include <sys/wait.h>
+#  include <csignal>
+#endif
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -1169,11 +1173,52 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
        buffering this build's log (`print-build-logs = on-failure`) can flush it. */
     buildLog.act->result(resBuildResult, (uint64_t) 1);
 
+    /* The structured diagnostic core; carried only on the gated
+       serve 2.9 / worker `build-log-query` wires. */
+    buildResult.logRef = worker.store.printStorePath(drvPath);
+#ifndef _WIN32
+    /* `builderStatus` is a raw wait(2) status (what feeds WIFEXITED /
+       statusToString), not an exit code: decode it so `exitCode` is the
+       builder's real exit code (or the negated terminating signal), rather
+       than e.g. 256 for `exit 1` or 9 for a SIGKILL. */
+    buildResult.exitCode = WIFEXITED(e.builderStatus) ? WEXITSTATUS(e.builderStatus)
+                           : (WIFSIGNALED(e.builderStatus) ? -WTERMSIG(e.builderStatus) : e.builderStatus);
+#else
+    buildResult.exitCode = e.builderStatus;
+#endif
+    {
+        std::string tail;
+        for (auto & line : buildLog.getTail()) {
+            tail += line;
+            tail += '\n';
+        }
+        buildResult.logTail = std::move(tail);
+    }
+
+#ifndef _WIN32
+    /* Only a direct SIGKILL counts as an OOM kill: it is inflicted from
+       outside the build, while a builder *exiting* 137 may merely imitate a
+       shell that reaped a SIGKILLed child — classifying that as transient
+       would make a retry layer loop on a deterministic failure. */
+    if (WIFSIGNALED(e.builderStatus) && WTERMSIG(e.builderStatus) == SIGKILL) {
+        buildResult.failureClass = BuildResult::FailureClass::ResourceExhausted;
+        buildResult.killedForMemory = true;
+    }
+#endif
+
     auto msg =
         fmt("Cannot build '%s'.\n"
             "Reason: " ANSI_RED "builder %s" ANSI_NORMAL ".",
             Magenta(worker.store.printStorePath(drvPath)),
             statusToString(e.builderStatus));
+
+    if (buildResult.killedForMemory) {
+        msg +=
+            "\nThe builder was killed, most likely by the kernel out-of-memory killer: "
+            "this failure is transient, and retrying with more memory may succeed.";
+        if (buildResult.peakMemoryBytes > 0)
+            msg += fmt(" Peak memory use: %s.", renderSize((int64_t) buildResult.peakMemoryBytes));
+    }
 
     msg += showKnownOutputs(worker.store, *drv);
 
