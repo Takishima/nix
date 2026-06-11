@@ -116,9 +116,11 @@ struct NixArgs : virtual MultiCommand, virtual MixCommonArgs, virtual RootArgs
         addFlag({
             .longName = "print-build-logs",
             .shortName = 'L',
-            .description = "Print full build logs on standard error.",
+            .description = "Print full build logs on standard error. Equivalent to `print-build-logs = on`. "
+                           "For the quiet-on-success, log-on-failure CI mode, set `print-build-logs = on-failure` "
+                           "(e.g. via `--option print-build-logs on-failure` or `nix.conf`).",
             .category = loggingCategory,
-            .handler = {[&]() { logger->setPrintBuildLogs(true); }},
+            .handler = {[&]() { settings.printBuildLogs.override(BuildLogPrintMode::on); }},
             .experimentalFeature = Xp::NixCommand,
         });
 
@@ -525,6 +527,11 @@ void mainWrapped(int argc, char ** argv)
     }
 
     applyJSONLogger();
+
+    /* Only when explicitly set, so we don't clobber a mode chosen by
+       `--log-format` (e.g. `bar-with-logs`). */
+    if (settings.printBuildLogs.overridden)
+        logger->setPrintBuildLogsMode(settings.printBuildLogs.get());
 
     if (args.helpRequested) {
         std::vector<std::string> subcommand;

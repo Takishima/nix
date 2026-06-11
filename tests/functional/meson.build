@@ -122,6 +122,7 @@ suites = [
       'binary-cache-build-remote.sh',
       'search.sh',
       'logging.sh',
+      'print-build-logs-on-failure.sh',
       'export.sh',
       'config.sh',
       'add.sh',

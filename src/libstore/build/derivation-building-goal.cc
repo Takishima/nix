@@ -1057,6 +1057,13 @@ Goal::Co DerivationBuildingGoal::buildLocally(
         outputLocks.unlock();
         co_return doneFailure(fixupBuilderFailureErrorMessage(std::move(e), *buildLog));
     } catch (BuildError & e) {
+        /* Output-validation failures (hash mismatch, disallowed reference,
+           non-determinism) reach here rather than through
+           `fixupBuilderFailureErrorMessage`. Signal the failure while the
+           activity is still live, so a logger buffering this build's log
+           (`print-build-logs = on-failure`) flushes it — every other
+           failure path does the same. */
+        buildLog->act->result(resBuildResult, (uint64_t) 1);
         builder.reset();
         outputLocks.unlock();
         co_return doneFailure(std::move(e));
