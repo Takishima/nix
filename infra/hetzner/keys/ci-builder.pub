@@ -1,7 +1,3 @@
-# Replace this file's contents with the public key of the load-test / CI client
-# that will reach the builders over ssh-ng://nixremote@<host>.
-# Lines starting with '#' are ignored by sshd, so an unpopulated file authorizes
-# no keys (the builder is still reachable for provisioning via its root key).
-#
-# Example:
-#   ssh-ed25519 AAAAC3Nza... ci-builder
+# Load-test/CI client key for the nixremote build user (same key as ops.pub;
+# the GH-hosted runner holds the private half as BUILDER_SSH_PRIVATE_KEY).
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEve0jarRFr37bWuFQe3SwH7GgiiAOnJZVuRB/+8VjcA hetzner-bootstrap
