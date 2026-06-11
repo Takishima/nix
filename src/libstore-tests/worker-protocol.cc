@@ -546,7 +546,7 @@ VERSIONED_CHARACTERIZATION_TEST(
                 .major = 1,
                 .minor = 38,
             },
-        .features = {"realisation-with-path-not-hash", "build-log-query"},
+        .features = {"realisation-with-path-not-hash", std::string{WorkerProto::featureBuildLogQuery}},
     }),
     ({
         using namespace std::literals::chrono_literals;
@@ -624,7 +624,7 @@ TEST_F(WorkerProtoTest, buildResult_buildLogQuery_readsBackCompatWithoutFeature)
     // Same version on both sides; only the `build-log-query` feature differs.
     auto withFeature = WorkerProto::Version{
         .number = {.major = 1, .minor = 38},
-        .features = {"realisation-with-path-not-hash", "build-log-query"},
+        .features = {"realisation-with-path-not-hash", std::string{WorkerProto::featureBuildLogQuery}},
     };
     auto withoutFeature = WorkerProto::Version{
         .number = {.major = 1, .minor = 38},

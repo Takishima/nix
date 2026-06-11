@@ -61,7 +61,7 @@ properties:
       >
       > Part of the structured build diagnostics, which are still
       > experimental: present only when produced by a Nix with the
-      > `serve-build-logs` / `build-log-query` features. Absent when unknown.
+      > `serve-build-logs` / `build-log-query-1` features. Absent when unknown.
 
   failurePhase:
     type: string

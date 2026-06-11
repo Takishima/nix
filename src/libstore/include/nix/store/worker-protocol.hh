@@ -139,8 +139,14 @@ struct WorkerProto
      * Feature for `QueryBuildLog`: fetching a build log by derivation path over
      * the worker protocol, so `nix log` works against an `ssh-ng://` store whose
      * daemon holds the log (`getBuildLogExact` over `ssh-ng`).
+     *
+     * This feature also gates extra `BuildResult` fields whose layout is not
+     * yet frozen. The feature string is the only thing that keeps two peers'
+     * byte streams in agreement, so any change to that layout MUST rename
+     * this string (bump the `-1` suffix): two binaries advertising the same
+     * string must always agree on the bytes.
      */
-    static constexpr std::string_view featureBuildLogQuery = "build-log-query";
+    static constexpr std::string_view featureBuildLogQuery = "build-log-query-1";
 
     /**
      * A unidirectional read connection, to be used by the read half of the

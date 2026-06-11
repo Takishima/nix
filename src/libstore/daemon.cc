@@ -1029,6 +1029,11 @@ static void performOp(
     }
 
     case WorkerProto::Op::QueryBuildLog: {
+        // Op and payload exist only under this feature; an op number sent
+        // without negotiating it is a protocol violation, same as an
+        // unknown op.
+        if (!conn.protoVersion.features.contains(WorkerProto::featureBuildLogQuery))
+            throw Error("invalid operation %1%", op);
         auto path = store->parseStorePath(readString(conn.from));
         logger->startWork();
         auto & logStore = require<LogStore>(*store);

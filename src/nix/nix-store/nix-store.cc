@@ -1128,7 +1128,11 @@ static void opServe(Strings opFlags, Strings opArgs)
             break;
         }
 
-        case ServeProto::Command::QueryBuildLog: { /* Provisional; serve >= 2.9. */
+        case ServeProto::Command::QueryBuildLog: {
+            // Only exists on the provisional 2.9 surface; below that it is
+            // an unknown command, exactly as on an older server.
+            if (!ServeProto::supportsDiagnostics(clientVersion))
+                throw Error("unknown serve command %1%", cmd);
             auto drvPath = store->parseStorePath(readString(in));
             auto & logStore = require<LogStore>(*store);
             auto log = logStore.getBuildLogExact(drvPath);

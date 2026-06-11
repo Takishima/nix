@@ -19,5 +19,5 @@ build-intrinsic classification.
 
 The classification travels only on the unstable protocol extensions (the
 serve protocol's provisional diagnostic surface and the worker protocol's
-`build-log-query` feature) and in JSON build results; the stable wire
+`build-log-query-1` feature) and in JSON build results; the stable wire
 formats are unchanged.
