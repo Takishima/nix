@@ -3,8 +3,7 @@ synopsis: "Out-of-memory kills are classified as transient build failures"
 ---
 
 When a builder dies from `SIGKILL` — most commonly the kernel out-of-memory
-killer, sometimes surfaced as exit code 137 by an intervening shell — the
-build result now carries a structured failure classification
+killer — the build result now carries a structured failure classification
 (`failureClass = ResourceExhausted`, `killedForMemory = true`), distinguishing
 "the machine ran out of memory" from "the build is genuinely broken".
 

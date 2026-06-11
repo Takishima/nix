@@ -1276,11 +1276,12 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
 
 #ifndef _WIN32
     /* A SIGKILL death is inflicted from outside the build — most commonly
-       the kernel OOM killer (an intervening shell reports it as exit code
-       137) — so it is a property of where the build ran, not of the
-       derivation. */
-    if ((WIFSIGNALED(e.builderStatus) && WTERMSIG(e.builderStatus) == SIGKILL)
-        || (WIFEXITED(e.builderStatus) && WEXITSTATUS(e.builderStatus) == 137)) {
+       the kernel OOM killer — so it is a property of where the build ran,
+       not of the derivation. Only the direct signal counts: a builder
+       *exiting* with 137 may merely be imitating a shell that reaped a
+       SIGKILLed child, and treating that as transient would make a retry
+       layer loop on a deterministic failure. */
+    if (WIFSIGNALED(e.builderStatus) && WTERMSIG(e.builderStatus) == SIGKILL) {
         buildResult.failureClass = BuildResult::FailureClass::ResourceExhausted;
         buildResult.killedForMemory = true;
     }
