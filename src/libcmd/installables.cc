@@ -566,7 +566,7 @@ std::vector<BuiltPathWithResult> Installable::build(
     return res;
 }
 
-static void throwBuildErrors(std::vector<KeyedBuildResult> & buildResults, const Store & store)
+void Installable::throwBuildErrors(std::vector<KeyedBuildResult> & buildResults, const Store & store)
 {
     std::vector<std::pair<const KeyedBuildResult *, const KeyedBuildResult::Failure *>> failed;
     for (auto & buildResult : buildResults) {
@@ -592,7 +592,12 @@ static void throwBuildErrors(std::vector<KeyedBuildResult> & buildResults, const
     }
 }
 
-std::vector<std::pair<ref<Installable>, BuiltPathWithResult>> Installable::build2(
+/**
+ * Common implementation of `build2` and `buildWithFailures`: partition
+ * the results into built paths and failures instead of throwing.
+ */
+static std::pair<std::vector<std::pair<ref<Installable>, BuiltPathWithResult>>, std::vector<KeyedBuildResult>>
+buildPartitioned(
     ref<Store> evalStore, ref<Store> store, Realise mode, const Installables & installables, BuildMode bMode)
 {
     if (mode == Realise::Nothing)
@@ -615,6 +620,7 @@ std::vector<std::pair<ref<Installable>, BuiltPathWithResult>> Installable::build
     }
 
     std::vector<std::pair<ref<Installable>, BuiltPathWithResult>> res;
+    std::vector<KeyedBuildResult> failures;
 
     switch (mode) {
 
@@ -653,9 +659,11 @@ std::vector<std::pair<ref<Installable>, BuiltPathWithResult>> Installable::build
             printMissing(store, pathsToBuild, lvlInfo);
 
         auto buildResults = store->buildPathsWithResults(pathsToBuild, bMode, evalStore);
-        throwBuildErrors(buildResults, *store);
         for (auto & buildResult : buildResults) {
-            // If we didn't throw, they must all be sucesses
+            if (buildResult.tryGetFailure()) {
+                failures.push_back(buildResult);
+                continue;
+            }
             auto & success = std::get<nix::BuildResult::Success>(buildResult.inner);
             for (auto & aux : backmap[buildResult.path]) {
                 std::visit(
@@ -692,6 +700,26 @@ std::vector<std::pair<ref<Installable>, BuiltPathWithResult>> Installable::build
         assert(false);
     }
 
+    return {std::move(res), std::move(failures)};
+}
+
+std::vector<std::pair<ref<Installable>, BuiltPathWithResult>> Installable::build2(
+    ref<Store> evalStore, ref<Store> store, Realise mode, const Installables & installables, BuildMode bMode)
+{
+    auto [res, failures] = buildPartitioned(evalStore, store, mode, installables, bMode);
+    throwBuildErrors(failures, *store);
+    return std::move(res);
+}
+
+Installable::BuildResultsWithFailures Installable::buildWithFailures(
+    ref<Store> evalStore, ref<Store> store, Realise mode, const Installables & installables, BuildMode bMode)
+{
+    auto [built, failures] = buildPartitioned(evalStore, store, mode, installables, bMode);
+
+    BuildResultsWithFailures res;
+    res.failures = std::move(failures);
+    for (auto & [_, builtPathWithResult] : built)
+        res.built.push_back(builtPathWithResult);
     return res;
 }
 
