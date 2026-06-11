@@ -3,10 +3,12 @@
 This is the upstream Nix package-manager source. Build/test instructions live in
 `HACKING.md` (→ `doc/manual/source/development/building.md`).
 
-## Hetzner remote-builder fleet (`infra/hetzner/`)
+## Hetzner remote-builder fleet
 
-A self-contained flake for NixOS remote builders on Hetzner, used to load-test the
-`ssh-ng://` worker protocol. See `infra/hetzner/README.md` for the full runbook.
+The canonical fleet config lives in the separate repo
+[`Takishima/nix-builder-infra`](https://github.com/Takishima/nix-builder-infra)
+(`infra/hetzner/` here is a reference copy only). See that repo's README for
+the full runbook. Builders run `comin` polling that repo's `main` branch.
 
 **Hard constraint for web sessions:** the Claude Code web sandbox has **no
 outbound SSH** (only HTTPS through Anthropic's proxy). Do **not** try to deploy

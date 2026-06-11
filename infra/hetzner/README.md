@@ -1,5 +1,11 @@
 # Hetzner NixOS builder fleet
 
+> **Moved:** the canonical fleet config now lives in
+> [Takishima/nix-builder-infra](https://github.com/Takishima/nix-builder-infra)
+> (own repo so GitHub Actions dispatch works out of the box; comin on the
+> builders polls that repo's `main`). The copy here is retained for reference
+> and is NOT what the builders deploy.
+
 A self-contained flake that defines a fleet of NixOS remote builders on Hetzner
 Cloud, deployed entirely from Claude Code web sessions. It will later be used to
 load-test the Nix `ssh-ng://` daemon worker protocol with real builds.
