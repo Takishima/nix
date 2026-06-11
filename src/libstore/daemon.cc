@@ -1014,6 +1014,24 @@ static void performOp(
         break;
     }
 
+    case WorkerProto::Op::QueryBuildLog: {
+        // Sent without negotiating the feature, this op number is a
+        // protocol violation — same as an unknown op.
+        if (!conn.protoVersion.features.contains(WorkerProto::featureBuildLogQuery))
+            throw Error("invalid operation %1%", op);
+        auto path = store->parseStorePath(readString(conn.from));
+        logger->startWork();
+        auto & logStore = require<LogStore>(*store);
+        auto log = logStore.getBuildLogExact(path);
+        logger->stopWork();
+        // A presence flag, then the contents: there is no generic
+        // `std::optional<std::string>` serialiser.
+        conn.to << (log ? 1 : 0);
+        if (log)
+            conn.to << *log;
+        break;
+    }
+
     default:
         throw Error("invalid operation %1%", op);
     }

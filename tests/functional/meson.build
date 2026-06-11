@@ -140,6 +140,7 @@ suites = [
       'compression-levels.sh',
       'nix-copy-ssh.sh',
       'nix-copy-ssh-ng.sh',
+      'ssh-ng-build-log.sh',
       'serve-build-log.sh',
       'build-remote-serve-log-stream.sh',
       'post-hook.sh',

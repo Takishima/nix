@@ -61,11 +61,8 @@ public:
     {
     }
 
-    // FIXME extend daemon protocol, move implementation to RemoteStore
-    std::optional<std::string> getBuildLogExact(const StorePath & path) override
-    {
-        unsupported("getBuildLogExact");
-    }
+    // `getBuildLogExact` is implemented in `RemoteStore` (the
+    // `QueryBuildLog` op).
 
 protected:
 

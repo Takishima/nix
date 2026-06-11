@@ -87,6 +87,15 @@ public:
     }
 
     /**
+     * Disambiguate `LocalFSStore` vs `RemoteStore`: the store is local, so
+     * read the log off disk rather than round-tripping through the daemon.
+     */
+    std::optional<std::string> getBuildLogExact(const StorePath & path) override
+    {
+        return LocalFSStore::getBuildLogExact(path);
+    }
+
+    /**
      * Implementation of `IndirectRootStore::addIndirectRoot()` which
      * delegates to the remote store.
      *

@@ -155,6 +155,8 @@ public:
 
     void addBuildLog(const StorePath & drvPath, std::string_view log) override;
 
+    std::optional<std::string> getBuildLogExact(const StorePath & path) override;
+
     std::optional<std::string> getVersion() override;
 
     void connect() override;

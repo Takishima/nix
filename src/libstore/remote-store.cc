@@ -791,6 +791,21 @@ void RemoteStore::addBuildLog(const StorePath & drvPath, std::string_view log)
     readInt(conn->from);
 }
 
+std::optional<std::string> RemoteStore::getBuildLogExact(const StorePath & path)
+{
+    auto conn(getConnection());
+    if (!conn->protoVersion.features.contains(WorkerProto::featureBuildLogQuery))
+        // Older daemon: report "no log here" rather than failing, so
+        // `nix log` falls through to substituters.
+        return std::nullopt;
+    conn->to << WorkerProto::Op::QueryBuildLog << printStorePath(path);
+    conn.processStderr();
+    // A presence flag, then the contents.
+    if (!readInt(conn->from))
+        return std::nullopt;
+    return readString(conn->from);
+}
+
 std::optional<std::string> RemoteStore::getVersion()
 {
     auto conn(getConnection());

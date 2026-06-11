@@ -264,6 +264,7 @@ enum struct WorkerProto::Op : uint64_t {
     AddBuildLog = 45,
     BuildPathsWithResults = 46,
     AddPermRoot = 47,
+    QueryBuildLog = 48,
 };
 
 struct WorkerProto::ClientHandshakeInfo
