@@ -1,0 +1,10 @@
+{
+  "builderId": "builder-7",
+  "builtOutputs": {},
+  "deduplicated": true,
+  "startTime": 30,
+  "status": "Built",
+  "stopTime": 50,
+  "success": true,
+  "timesBuilt": 1
+}

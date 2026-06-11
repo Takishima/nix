@@ -192,6 +192,8 @@ schemas += [
       'success.json',
       'output-rejected.json',
       'not-deterministic.json',
+      'resource-exhausted.json',
+      'deduplicated.json',
     ],
   },
   # Match exact variant

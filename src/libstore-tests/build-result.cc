@@ -92,6 +92,35 @@ INSTANTIATE_TEST_SUITE_P(
                 .cpuUser = std::chrono::microseconds(500s),
                 .cpuSystem = std::chrono::microseconds(604s),
             },
+        },
+        std::pair{
+            // Deferred dedup/fleet set.
+            "deduplicated",
+            BuildResult{
+                .inner{BuildResult::Success{
+                    .status = BuildResult::Success::Built,
+                }},
+                .timesBuilt = 1,
+                .startTime = 30,
+                .stopTime = 50,
+                .deduplicated = true,
+                .builderId = "builder-7",
+            },
+        },
+        std::pair{
+            // Failure classification + resource hint (a builder-internal OOM).
+            "resource-exhausted",
+            BuildResult{
+                .inner{BuildResult::Failure{{
+                    .status = BuildResult::Failure::MiscFailure,
+                    .msg = HintFmt("builder ran out of memory"),
+                }}},
+                .timesBuilt = 1,
+                .exitCode = 137,
+                .failureClass = BuildResult::FailureClass::ResourceExhausted,
+                .killedForMemory = true,
+                .peakMemoryBytes = 4509715456,
+            },
         }));
 
 } // namespace nix

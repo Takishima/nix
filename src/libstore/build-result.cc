@@ -127,6 +127,33 @@ static BuildResult::Failure::Status failureStatusFromString(std::string_view str
     throw Error("unknown built result failure status '%s'", str);
 }
 
+static constexpr std::array<std::pair<BuildResult::FailureClass, std::string_view>, 4> failureClassStrings{{
+#define ENUM_ENTRY(e) {BuildResult::FailureClass::e, #e}
+    ENUM_ENTRY(BuildError),
+    ENUM_ENTRY(ResourceExhausted),
+    ENUM_ENTRY(Evicted),
+    ENUM_ENTRY(Infra),
+#undef ENUM_ENTRY
+}};
+
+static std::string_view failureClassToString(BuildResult::FailureClass cls)
+{
+    for (const auto & [enumVal, str] : failureClassStrings) {
+        if (enumVal == cls)
+            return str;
+    }
+    throw Error("unknown failure class: %d", static_cast<int>(cls));
+}
+
+static BuildResult::FailureClass failureClassFromString(std::string_view str)
+{
+    for (const auto & [enumVal, enumStr] : failureClassStrings) {
+        if (enumStr == str)
+            return enumVal;
+    }
+    throw Error("unknown build result failure class '%s'", str);
+}
+
 bool BuildError::operator==(const BuildError & other) const noexcept
 {
     return status == other.status && isNonDeterministic == other.isNonDeterministic && message() == other.message();
@@ -163,6 +190,37 @@ void adl_serializer<BuildResult>::to_json(json & res, const BuildResult & br)
         res["cpuSystem"] = br.cpuSystem->count();
     }
 
+    // Diagnostics are emitted only when present, so a result without
+    // them serializes exactly as before.
+    if (!br.logRef.empty()) {
+        res["logRef"] = br.logRef;
+    }
+    if (!br.failurePhase.empty()) {
+        res["failurePhase"] = br.failurePhase;
+    }
+    if (br.exitCode != 0) {
+        res["exitCode"] = br.exitCode;
+    }
+    if (!br.logTail.empty()) {
+        res["logTail"] = br.logTail;
+    }
+
+    if (br.deduplicated) {
+        res["deduplicated"] = br.deduplicated;
+    }
+    if (!br.builderId.empty()) {
+        res["builderId"] = br.builderId;
+    }
+    if (br.failureClass != BuildResult::FailureClass::BuildError) {
+        res["failureClass"] = failureClassToString(br.failureClass);
+    }
+    if (br.killedForMemory) {
+        res["killedForMemory"] = br.killedForMemory;
+    }
+    if (br.peakMemoryBytes != 0) {
+        res["peakMemoryBytes"] = br.peakMemoryBytes;
+    }
+
     // Handle success or failure variant
     std::visit(
         overloaded{
@@ -197,6 +255,35 @@ BuildResult adl_serializer<BuildResult>::from_json(const json & _json)
     }
     if (auto cpuSystem = optionalValueAt(json, "cpuSystem")) {
         br.cpuSystem = std::chrono::microseconds(getUnsigned(*cpuSystem));
+    }
+
+    if (auto logRef = optionalValueAt(json, "logRef")) {
+        br.logRef = getString(*logRef);
+    }
+    if (auto failurePhase = optionalValueAt(json, "failurePhase")) {
+        br.failurePhase = getString(*failurePhase);
+    }
+    if (auto exitCode = optionalValueAt(json, "exitCode")) {
+        br.exitCode = getInteger<int64_t>(*exitCode);
+    }
+    if (auto logTail = optionalValueAt(json, "logTail")) {
+        br.logTail = getString(*logTail);
+    }
+
+    if (auto deduplicated = optionalValueAt(json, "deduplicated")) {
+        br.deduplicated = getBoolean(*deduplicated);
+    }
+    if (auto builderId = optionalValueAt(json, "builderId")) {
+        br.builderId = getString(*builderId);
+    }
+    if (auto failureClass = optionalValueAt(json, "failureClass")) {
+        br.failureClass = failureClassFromString(getString(*failureClass));
+    }
+    if (auto killedForMemory = optionalValueAt(json, "killedForMemory")) {
+        br.killedForMemory = getBoolean(*killedForMemory);
+    }
+    if (auto peakMemoryBytes = optionalValueAt(json, "peakMemoryBytes")) {
+        br.peakMemoryBytes = getUnsigned(*peakMemoryBytes);
     }
 
     // Determine success or failure based on success field

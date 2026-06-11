@@ -1,0 +1,13 @@
+{
+  "errorMsg": "builder ran out of memory",
+  "exitCode": 137,
+  "failureClass": "ResourceExhausted",
+  "isNonDeterministic": false,
+  "killedForMemory": true,
+  "peakMemoryBytes": 4509715456,
+  "startTime": 0,
+  "status": "MiscFailure",
+  "stopTime": 0,
+  "success": false,
+  "timesBuilt": 1
+}
