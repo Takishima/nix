@@ -345,6 +345,7 @@ sources = files(
   's3-binary-cache-store.cc',
   's3-url.cc',
   'serve-protocol-connection.cc',
+  'serve-protocol-log-tunnel.cc',
   'serve-protocol.cc',
   'sqlite.cc',
   'ssh-store.cc',

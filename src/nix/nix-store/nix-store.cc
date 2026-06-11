@@ -10,6 +10,10 @@
 #include "nix/store/local-store.hh"
 #include "nix/store/serve-protocol.hh"
 #include "nix/store/serve-protocol-connection.hh"
+#include "nix/store/serve-protocol-log-tunnel.hh"
+#include "nix/store/worker-protocol.hh" // for the STDERR_* log-tunnel framing
+#include "nix/util/logging.hh"
+#include "nix/util/serialise.hh"
 #include "nix/main/shared.hh"
 #include "graphml.hh"
 #include "nix/cmd/legacy.hh"
@@ -1007,13 +1011,32 @@ static void opServe(Strings opFlags, Strings opArgs)
 
             getBuildSettings();
 
+            // Stream the build log as STDERR_* frames before the result;
+            // old clients (e.g. Hydra at 2.8) take the unchanged path.
+            auto streaming = ServeProto::supportsDiagnostics(clientVersion);
+            std::shared_ptr<ServeTunnelLogger> tunnel;
+            Logger * prevLogger = logger;
+            if (streaming) {
+                tunnel = std::make_shared<ServeTunnelLogger>(out);
+                logger = tunnel.get();
+                tunnel->startWork();
+            }
+            Finally restoreLogger([&] {
+                if (streaming)
+                    logger = prevLogger;
+            });
+
             try {
 #ifndef _WIN32 // TODO figure out if Windows needs something similar
                 MonitorFdHup monitor(in.fd);
 #endif
                 store->buildPaths(toDerivedPaths(paths));
+                if (streaming)
+                    tunnel->stopWork();
                 out << 0;
             } catch (Error & e) {
+                if (streaming)
+                    tunnel->stopWork();
                 assert(e.info().status);
                 out << e.info().status << e.msg();
             }
@@ -1031,10 +1054,27 @@ static void opServe(Strings opFlags, Strings opArgs)
 
             getBuildSettings();
 
+            // Live log streaming; see BuildPaths above.
+            auto streaming = ServeProto::supportsDiagnostics(clientVersion);
+            std::shared_ptr<ServeTunnelLogger> tunnel;
+            Logger * prevLogger = logger;
+            if (streaming) {
+                tunnel = std::make_shared<ServeTunnelLogger>(out);
+                logger = tunnel.get();
+                tunnel->startWork();
+            }
+            Finally restoreLogger([&] {
+                if (streaming)
+                    logger = prevLogger;
+            });
+
 #ifndef _WIN32 // TODO figure out if Windows needs something similar
             MonitorFdHup monitor(in.fd);
 #endif
             auto status = store->buildDerivation(drvPath, drv);
+
+            if (streaming)
+                tunnel->stopWork();
 
             ServeProto::write(*store, wconn, status);
             break;

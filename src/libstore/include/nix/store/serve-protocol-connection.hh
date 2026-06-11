@@ -81,6 +81,14 @@ struct ServeProto::BasicClientConnection
      */
     BuildResult getBuildDerivationResponse(const StoreDirConfig & store);
 
+    /**
+     * Replay a serve log-frame stream (`STDERR_*`) into the ambient `logger`
+     * until `STDERR_LAST`, after which the build result follows. Used before
+     * reading a build result when the negotiated version supports live log
+     * streaming (serve >= 2.9 / `serve-build-logs`).
+     */
+    void processStderr();
+
     void narFromPath(const StoreDirConfig & store, const StorePath & path, fun<void(Source &)> receiveNar);
 
     void importPaths(const StoreDirConfig & store, fun<void(Sink &)> sendPaths);

@@ -83,6 +83,7 @@ headers = [ config_pub_h ] + files(
   's3-url.hh',
   'serve-protocol-connection.hh',
   'serve-protocol-impl.hh',
+  'serve-protocol-log-tunnel.hh',
   'serve-protocol.hh',
   'sqlite.hh',
   'ssh-store.hh',
