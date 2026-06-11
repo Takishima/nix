@@ -108,4 +108,32 @@ having index 0), and *outname* is the symbolic derivation output name
 `-<outname>` is omitted if *outname* = `out` (denoting the default
 output).
 
+# JSON output
+
+With `--json`, the results are printed on standard output as a JSON
+array with one entry per derivation (or substituted store path).
+
+A derivation that was built successfully is rendered as an object with
+its `drvPath`, its `outputs`, and timing information.
+
+A derivation that *failed* is rendered as an object with its `drvPath`
+and the [build result](@docroot@/protocols/json/build-result.md) of the
+failure — `"success": false`, the failure `status`, the `errorMsg`, and
+whichever structured diagnostics are known, such as the builder's
+`exitCode`, the `logTail`, the failure's retry classification
+(`failureClass`, `killedForMemory`), and `peakMemoryBytes`. Entries
+with `"success": false` are the failed builds; combined with
+`--keep-going`, this gives a machine-readable per-derivation failure
+report:
+
+```console
+# nix build --json --keep-going .#pkgA .#pkgB \
+    | jq '[.[] | select(.success == false)]'
+```
+
+The command still fails (and renders the failures on standard error)
+exactly as without `--json`. Derivations whose build was cancelled
+before producing a result — e.g. the remaining builds after a failure
+without `--keep-going` — are not listed.
+
 )""
