@@ -35,8 +35,12 @@ struct ServeTunnelLogger : Logger
     void logEI(const ErrorInfo & ei) override;
 
     void startActivity(
-        ActivityId act, Verbosity lvl, ActivityType type, const std::string & s, const Fields & fields, ActivityId parent)
-        override;
+        ActivityId act,
+        Verbosity lvl,
+        ActivityType type,
+        const std::string & s,
+        const Fields & fields,
+        ActivityId parent) override;
 
     void stopActivity(ActivityId act) override;
 

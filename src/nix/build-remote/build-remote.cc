@@ -93,10 +93,10 @@ static std::string renderRemoteBuildLogTail(
         for (auto it = lines.end() - n; it != lines.end(); ++it)
             msg += "> " + *it + "\n";
         // On its own line for easy copying (triple-click).
-        msg += fmt(
-            "For full logs, run:\n  " ANSI_BOLD "nix log --store '%s' '%s'" ANSI_NORMAL,
-            storeUri,
-            localStore.printStorePath(drvPath));
+        msg +=
+            fmt("For full logs, run:\n  " ANSI_BOLD "nix log --store '%s' '%s'" ANSI_NORMAL,
+                storeUri,
+                localStore.printStorePath(drvPath));
         return msg;
     } catch (...) {
         return "";

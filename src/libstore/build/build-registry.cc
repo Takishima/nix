@@ -57,8 +57,7 @@ public:
         for (auto & s : head)
             out.push_back(BuildLogFrame{s, true});
         if (droppedFrames > 0)
-            out.push_back(BuildLogFrame{
-                fmt("…%d frames / %d bytes truncated…\n", droppedFrames, droppedBytes), true});
+            out.push_back(BuildLogFrame{fmt("…%d frames / %d bytes truncated…\n", droppedFrames, droppedBytes), true});
         for (auto & s : tail)
             out.push_back(BuildLogFrame{s, true});
         return out;
@@ -312,13 +311,14 @@ public:
             // could itself have requested are enumerated.
             if (!policy.mayBuild(auth, key))
                 continue;
-            out.push_back(ActiveBuildStatus{
-                .key = key,
-                .startTime = build.startTime,
-                .subscriberCount = build.subscribers.size(),
-                .logBytes = build.logBytes,
-                .rooted = build.rooted,
-            });
+            out.push_back(
+                ActiveBuildStatus{
+                    .key = key,
+                    .startTime = build.startTime,
+                    .subscriberCount = build.subscribers.size(),
+                    .logBytes = build.logBytes,
+                    .rooted = build.rooted,
+                });
         }
         return out;
     }

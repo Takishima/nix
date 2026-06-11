@@ -87,8 +87,8 @@ struct Machine
      * with `@` are interpreted as paths to other configuration files in
      * the same format.
      */
-    static Machines parseConfig(
-        const StringSet & defaultSystems, const std::string & config, bool useSshNgForRemoteBuilds = false);
+    static Machines
+    parseConfig(const StringSet & defaultSystems, const std::string & config, bool useSshNgForRemoteBuilds = false);
 };
 
 } // namespace nix

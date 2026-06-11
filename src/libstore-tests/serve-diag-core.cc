@@ -42,11 +42,16 @@ namespace {
 struct Version
 {
     uint8_t major = 0, minor = 0;
+
     bool operator>=(const Version & o) const
     {
         return major != o.major ? major > o.major : minor >= o.minor;
     }
-    bool operator==(const Version & o) const { return major == o.major && minor == o.minor; }
+
+    bool operator==(const Version & o) const
+    {
+        return major == o.major && minor == o.minor;
+    }
 };
 
 // The handshake takes the minimum of the two peers' versions (back-compat
@@ -58,9 +63,9 @@ Version negotiate(Version a, Version b)
 
 constexpr Version V2_3{2, 3};
 constexpr Version V2_6{2, 6};
-constexpr Version V2_8{2, 8}; // current SERVE_PROTOCOL_VERSION
-constexpr Version V2_9{2, 9}; // diagnostic core — the COMPATIBLE wire version (minor bump)
-constexpr Version V3_0{3, 0}; // a major bump — REJECTED by the client handshake (see below)
+constexpr Version V2_8{2, 8};       // current SERVE_PROTOCOL_VERSION
+constexpr Version V2_9{2, 9};       // diagnostic core — the COMPATIBLE wire version (minor bump)
+constexpr Version V3_0{3, 0};       // a major bump — REJECTED by the client handshake (see below)
 constexpr Version Vunstable{2, 99}; // deferred builderId/deduplicated, NOT frozen
 
 // The serve *client* handshake guard, faithful to serve-protocol-connection.cc:
@@ -87,11 +92,13 @@ bool supportsQueryBuildLog(Version negotiated)
 struct Sink
 {
     std::string buf;
+
     void putInt(uint64_t v)
     {
         for (int i = 0; i < 8; ++i)
             buf.push_back(char((v >> (i * 8)) & 0xff)); // little-endian
     }
+
     void putString(std::string_view s)
     {
         putInt(s.size());
@@ -105,7 +112,12 @@ struct Source
 {
     std::string_view s;
     size_t pos = 0;
-    bool eof() const { return pos >= s.size(); }
+
+    bool eof() const
+    {
+        return pos >= s.size();
+    }
+
     uint64_t getInt()
     {
         if (pos + 8 > s.size())
@@ -116,6 +128,7 @@ struct Source
         pos += 8;
         return v;
     }
+
     std::string getString()
     {
         uint64_t n = getInt();
@@ -286,6 +299,7 @@ std::string toHex(std::string_view b)
 struct LogStore
 {
     std::map<std::string, std::string> logs; // logRef -> log contents
+
     std::string get(const std::string & logRef) const
     {
         auto it = logs.find(logRef);
@@ -451,8 +465,7 @@ TEST(ServeDiagCore, backCompatMatrixBothDirections)
 //     client. That is why the diagnostic core ships as {2,9}, not {3,0}.
 TEST(ServeDiagCore, majorBumpRejectedByClientGuardBeforeMin)
 {
-    EXPECT_FALSE(clientAcceptsServer(V3_0))
-        << "old client (major==2) REJECTS a {3,0} builder before min()";
+    EXPECT_FALSE(clientAcceptsServer(V3_0)) << "old client (major==2) REJECTS a {3,0} builder before min()";
     EXPECT_TRUE(clientAcceptsServer(V2_9)) << "old client ACCEPTS a {2,9} builder (same major)";
     EXPECT_TRUE(negotiate(V2_8, V2_9) == V2_8 && !supportsQueryBuildLog(negotiate(V2_8, V2_9)))
         << "accepted {2,9} builder negotiates {2,8} for the old client — no new fields/op";
@@ -486,8 +499,7 @@ TEST(ServeDiagCore, deferredSetAppendsAfterFrozenCore)
     auto r = sample();
     std::string b29 = ser(V2_9, r), bU = ser(Vunstable, r);
     EXPECT_GT(bU.size(), b29.size());
-    EXPECT_EQ(bU.compare(0, b29.size(), b29), 0)
-        << "unstable builderId/deduplicated append AFTER the frozen 2.9 core";
+    EXPECT_EQ(bU.compare(0, b29.size(), b29), 0) << "unstable builderId/deduplicated append AFTER the frozen 2.9 core";
 }
 
 } // namespace serve_diag_core_test

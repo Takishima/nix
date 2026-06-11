@@ -285,8 +285,7 @@ TEST(BuildRegistry, finishIsIdempotentAfterCancel)
 
     bool cancelled = false;
     Recorder a;
-    auto ra = reg->startOrAttach(
-        auth, key("k"), a.logSink(), a.resultSink(), {}, [&] { cancelled = true; });
+    auto ra = reg->startOrAttach(auth, key("k"), a.logSink(), a.resultSink(), {}, [&] { cancelled = true; });
     ASSERT_TRUE(ra);
     reg->unsubscribe(ra->id, DetachReason::Hup); // refcount → 0, no root → cancel
     EXPECT_TRUE(cancelled);
@@ -311,8 +310,7 @@ TEST(BuildRegistry, cancel_C_a_continuesWhenAnotherSubscriberRemains)
 
     bool cancelled = false;
     Recorder a, b;
-    auto ra = reg->startOrAttach(
-        auth, key("k"), a.logSink(), a.resultSink(), {}, [&] { cancelled = true; });
+    auto ra = reg->startOrAttach(auth, key("k"), a.logSink(), a.resultSink(), {}, [&] { cancelled = true; });
     auto rb = reg->startOrAttach(auth, key("k"), b.logSink(), b.resultSink(), {});
     ASSERT_TRUE(ra);
     ASSERT_TRUE(rb);
@@ -322,7 +320,7 @@ TEST(BuildRegistry, cancel_C_a_continuesWhenAnotherSubscriberRemains)
     EXPECT_TRUE(reg->isLive(key("k")));
 
     reg->finish(key("k"), successResult());
-    ASSERT_TRUE(b.result); // #2 still gets the result
+    ASSERT_TRUE(b.result);  // #2 still gets the result
     EXPECT_FALSE(a.result); // #1 already detached
 }
 
@@ -334,8 +332,7 @@ TEST(BuildRegistry, cancel_C_b_cancelsWhenLastSubscriberLeavesNoRoot)
 
     bool cancelled = false;
     Recorder a;
-    auto ra = reg->startOrAttach(
-        auth, key("k"), a.logSink(), a.resultSink(), {}, [&] { cancelled = true; });
+    auto ra = reg->startOrAttach(auth, key("k"), a.logSink(), a.resultSink(), {}, [&] { cancelled = true; });
     ASSERT_TRUE(ra);
     reg->unsubscribe(ra->id, DetachReason::Hup);
     EXPECT_TRUE(cancelled);
@@ -351,12 +348,11 @@ TEST(BuildRegistry, cancel_C_c_explicitRootKeepsBuildAlivePastRefcountZero)
     bool cancelled = false;
     Recorder a;
     SubscribeOptions opts{.explicitRoot = true};
-    auto ra = reg->startOrAttach(
-        auth, key("k"), a.logSink(), a.resultSink(), opts, [&] { cancelled = true; });
+    auto ra = reg->startOrAttach(auth, key("k"), a.logSink(), a.resultSink(), opts, [&] { cancelled = true; });
     ASSERT_TRUE(ra);
     reg->unsubscribe(ra->id, DetachReason::Hup); // refcount → 0 but rooted
     EXPECT_FALSE(cancelled);
-    EXPECT_TRUE(reg->isLive(key("k"))); // continues to completion
+    EXPECT_TRUE(reg->isLive(key("k")));     // continues to completion
     reg->finish(key("k"), successResult()); // delivered to nobody, drops entry
     EXPECT_FALSE(reg->isLive(key("k")));
 }
@@ -392,14 +388,13 @@ TEST(BuildRegistry, cancel_C_f_activeCancelScopedToCancellerWhenOthersRemain)
 
     bool cancelled = false;
     Recorder a, b;
-    auto ra = reg->startOrAttach(
-        auth, key("k"), a.logSink(), a.resultSink(), {}, [&] { cancelled = true; });
+    auto ra = reg->startOrAttach(auth, key("k"), a.logSink(), a.resultSink(), {}, [&] { cancelled = true; });
     auto rb = reg->startOrAttach(auth, key("k"), b.logSink(), b.resultSink(), {});
     ASSERT_TRUE(ra);
     ASSERT_TRUE(rb);
 
     reg->unsubscribe(ra->id, DetachReason::Cancel); // active cancel by #1
-    EXPECT_FALSE(cancelled); // build unaffected — #2 still attached
+    EXPECT_FALSE(cancelled);                        // build unaffected — #2 still attached
     EXPECT_TRUE(reg->isLive(key("k")));
     reg->finish(key("k"), successResult());
     EXPECT_TRUE(b.result);
@@ -419,8 +414,8 @@ TEST(BuildRegistry, timeout_C_d_perSubscriberDetachUnderMaxEnvelope)
     Recorder shortS, longS;
     SubscribeOptions shortOpts{.deadline = 100};
     SubscribeOptions longOpts{.deadline = 1000};
-    auto rShort = reg->startOrAttach(
-        auth, key("k"), shortS.logSink(), shortS.resultSink(), shortOpts, [&] { cancelled = true; });
+    auto rShort =
+        reg->startOrAttach(auth, key("k"), shortS.logSink(), shortS.resultSink(), shortOpts, [&] { cancelled = true; });
     auto rLong = reg->startOrAttach(auth, key("k"), longS.logSink(), longS.resultSink(), longOpts);
     ASSERT_TRUE(rShort);
     ASSERT_TRUE(rLong);
@@ -472,7 +467,7 @@ TEST(BuildRegistry, keepFailedIsLogicalOr)
 
     Recorder a, b;
     SubscribeOptions wants{.keepFailed = true};
-    reg->startOrAttach(auth, key("k"), a.logSink(), a.resultSink(), {});    // no keep-failed
+    reg->startOrAttach(auth, key("k"), a.logSink(), a.resultSink(), {}); // no keep-failed
     EXPECT_FALSE(reg->keepFailedRequested(key("k")));
     reg->startOrAttach(auth, key("k"), b.logSink(), b.resultSink(), wants); // one wants it
     EXPECT_TRUE(reg->keepFailedRequested(key("k")));

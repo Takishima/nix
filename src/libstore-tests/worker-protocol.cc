@@ -641,8 +641,8 @@ TEST_F(WorkerProtoTest, buildResult_buildLogQuery_readsBackCompatWithoutFeature)
 
     // A feature-less reader decodes the base value and stops at the boundary.
     StringSource source{withTail.s};
-    BuildResult got =
-        WorkerProto::Serialise<BuildResult>::read(store, WorkerProto::ReadConn{.from = source, .version = withoutFeature});
+    BuildResult got = WorkerProto::Serialise<BuildResult>::read(
+        store, WorkerProto::ReadConn{.from = source, .version = withoutFeature});
     EXPECT_EQ(got, base);
     EXPECT_EQ(source.pos, withoutTail.s.size());
 }

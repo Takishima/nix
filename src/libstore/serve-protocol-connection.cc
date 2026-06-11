@@ -70,7 +70,6 @@ ServeProto::Version ServeProto::offeredVersion()
                                                                      : ServeProto::latest;
 }
 
-
 ServeProto::Version ServeProto::BasicClientConnection::handshake(
     BufferedSink & to, Source & from, ServeProto::Version localVersion, std::string_view host)
 {

@@ -300,7 +300,8 @@ struct Coordinator
     /** Fork a build child that runs the resolved derivation and frames its log
      *  + result back over a pipe. Builders stay forked, so a builder crash is
      *  contained exactly as today. */
-    void startBuild(const BuildRegistryKey & key, const StorePath & drvPath, const BasicDerivation & drv, BuildMode buildMode)
+    void startBuild(
+        const BuildRegistryKey & key, const StorePath & drvPath, const BasicDerivation & drv, BuildMode buildMode)
     {
         Pipe pipe;
         pipe.create();
@@ -396,8 +397,7 @@ struct Coordinator
         SubscribeOptions opts;
         opts.replayWanted = replayWanted != 0;
 
-        auto attach = registry->startOrAttach(
-            auth, key, liveSink, resultSink, opts, [this, key] { onCancel(key); });
+        auto attach = registry->startOrAttach(auth, key, liveSink, resultSink, opts, [this, key] { onCancel(key); });
         if (!attach) {
             // Denied (uniform — no existence oracle). Close without revealing.
             conn.done = true;

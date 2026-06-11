@@ -464,19 +464,18 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
        not to any one subscriber's worker. */
     if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator) && buildMode == bmNormal
         && std::holds_alternative<LocalBuildCapability>(localBuildResult)
-        && getEnv("NIX_BUILD_COORDINATOR_INNER").value_or("").empty()
-        && dynamic_cast<LocalStore *>(&worker.store)) {
+        && getEnv("NIX_BUILD_COORDINATOR_INNER").value_or("").empty() && dynamic_cast<LocalStore *>(&worker.store)) {
         {
             /* The connect/spawn handshake is non-blocking: the only retry
                case is the narrow lost-election race, waited out on the
                worker's event loop rather than in-goal. */
             std::optional<CoordinatorRelaySession> relayAttempt;
             for (int attempt = 0;
-                 !(relayAttempt = tryStartCoordinatorRelay(worker.store, drvPath, *drv, buildMode, *logger, /*trusted=*/true));
+                 !(relayAttempt =
+                       tryStartCoordinatorRelay(worker.store, drvPath, *drv, buildMode, *logger, /*trusted=*/true));
                  ++attempt) {
                 if (attempt >= 10)
-                    throw Error(
-                        "could not reach the build coordinator for '%s'", worker.store.printStorePath(drvPath));
+                    throw Error("could not reach the build coordinator for '%s'", worker.store.printStorePath(drvPath));
                 co_await waitForAWhile();
             }
             auto relay = std::move(*relayAttempt);
@@ -894,7 +893,8 @@ Goal::Co DerivationBuildingGoal::buildWithHook(
 
         auto e = BuildError(
             BuildResult::Failure::MiscFailure,
-            "Cannot build '%s'.\nReason: " ANSI_RED "the build hook %s" ANSI_NORMAL "; the remote failure is reported above.",
+            "Cannot build '%s'.\nReason: " ANSI_RED "the build hook %s" ANSI_NORMAL
+            "; the remote failure is reported above.",
             Magenta(worker.store.printStorePath(drvPath)),
             statusToString(status));
 
@@ -1296,8 +1296,9 @@ BuildError DerivationBuildingGoal::fixupBuilderFailureErrorMessage(BuilderFailur
        is the difference between "fix the derivation" and "retry with more
        memory". */
     if (buildResult.killedForMemory) {
-        msg += "\nThe builder was killed, most likely by the kernel out-of-memory killer: "
-               "this failure is transient, and retrying with more memory may succeed.";
+        msg +=
+            "\nThe builder was killed, most likely by the kernel out-of-memory killer: "
+            "this failure is transient, and retrying with more memory may succeed.";
         if (buildResult.peakMemoryBytes > 0)
             msg += fmt(" Peak memory use: %s.", renderSize((int64_t) buildResult.peakMemoryBytes));
     }

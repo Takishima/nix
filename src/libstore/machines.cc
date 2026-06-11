@@ -130,7 +130,8 @@ static std::vector<std::string> expandBuilderLines(const std::string & builders)
     return result;
 }
 
-static Machine parseBuilderLine(const StringSet & defaultSystems, const std::string & line, bool useSshNgForRemoteBuilds)
+static Machine
+parseBuilderLine(const StringSet & defaultSystems, const std::string & line, bool useSshNgForRemoteBuilds)
 {
     const auto tokens = tokenizeString<std::vector<std::string>>(line);
 

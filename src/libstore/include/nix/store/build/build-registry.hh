@@ -186,7 +186,11 @@ struct SubscriptionId
     uint64_t value = 0;
     std::strong_ordering operator<=>(const SubscriptionId &) const = default;
     bool operator==(const SubscriptionId &) const = default;
-    explicit operator bool() const { return value != 0; }
+
+    explicit operator bool() const
+    {
+        return value != 0;
+    }
 };
 
 /**
@@ -200,7 +204,12 @@ struct SubscriptionId
 struct BuildLease
 {
     uint64_t epoch = 0;
-    bool valid() const { return epoch != 0; }
+
+    bool valid() const
+    {
+        return epoch != 0;
+    }
+
     std::strong_ordering operator<=>(const BuildLease &) const = default;
 };
 
@@ -346,7 +355,6 @@ struct ReplayBufferCaps
  * and hosted by the coordinator for the stock daemon. `policy` must outlive the
  * registry.
  */
-std::unique_ptr<BuildRegistry>
-makeInMemoryBuildRegistry(const BuildAuthPolicy & policy, ReplayBufferCaps caps = {});
+std::unique_ptr<BuildRegistry> makeInMemoryBuildRegistry(const BuildAuthPolicy & policy, ReplayBufferCaps caps = {});
 
 } // namespace nix

@@ -70,8 +70,8 @@ struct BufStringSink : BufferedSink
 
 struct DecodedWire
 {
-    std::vector<std::string> rawNextLines;     // STDERR_NEXT payloads
-    std::vector<std::string> buildLogLines;    // resBuildLogLine result fields
+    std::vector<std::string> rawNextLines;  // STDERR_NEXT payloads
+    std::vector<std::string> buildLogLines; // resBuildLogLine result fields
     size_t activitiesStarted = 0;
 };
 
@@ -138,7 +138,8 @@ TEST(CoordinatorRelay, framesSurviveServeTunnelAtLvlError)
     ServeTunnelLogger tunnel(wire);
     tunnel.startWork();
 
-    auto res = pump({frameRec("hello-from-the-builder\n"), frameRec("second-line\n"), resultRec(successResult())}, tunnel);
+    auto res =
+        pump({frameRec("hello-from-the-builder\n"), frameRec("second-line\n"), resultRec(successResult())}, tunnel);
 
     tunnel.stopWork();
     wire.flush();

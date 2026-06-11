@@ -169,7 +169,8 @@ TEST(machines, getMachinesElasticDefaultsOff)
 
 TEST(machines, getMachinesElasticFlag)
 {
-    auto actual = Machine::parseConfig({"TEST_ARCH-TEST_OS"}, "nix@scratchy.labs.cs.uu.nl - - 8 3 kvm benchmark - true");
+    auto actual =
+        Machine::parseConfig({"TEST_ARCH-TEST_OS"}, "nix@scratchy.labs.cs.uu.nl - - 8 3 kvm benchmark - true");
     ASSERT_THAT(actual, SizeIs(1));
     EXPECT_THAT(actual[0], Field(&Machine::maxJobs, Eq(8)));
     EXPECT_THAT(actual[0], Field(&Machine::isElastic, Eq(true)));

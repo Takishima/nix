@@ -411,8 +411,8 @@ TEST_F(ServeProtoTest, buildResult_2_9_readsBackCompatAt_2_8)
     // A 2.8 reader of the 2.9 bytes decodes the base value and stops exactly at
     // the 2.8 boundary, leaving the diagnostic tail unconsumed.
     StringSource source{at29.s};
-    BuildResult got =
-        ServeProto::Serialise<BuildResult>::read(store, ServeProto::ReadConn{.from = source, .version = ServeProto::Version{2, 8}});
+    BuildResult got = ServeProto::Serialise<BuildResult>::read(
+        store, ServeProto::ReadConn{.from = source, .version = ServeProto::Version{2, 8}});
     EXPECT_EQ(got, base);
     EXPECT_EQ(source.pos, at28.s.size());
 }
