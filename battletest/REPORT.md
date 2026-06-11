@@ -1,24 +1,26 @@
 # battletest report — remote-build protocol branch on Kubernetes
 
-> **Status update:** anomalies 1–4 below have since been fixed on this
-> branch, each with a regression test that reproduces it first:
+> **Status update:** all six anomalies below have since been fixed on the
+> protocol branch, each with a regression test that reproduces it first:
 >
 > | anomaly | fix | tests |
 > |---|---|---|
 > | 1 (no serve log delivery with coordinator) | `libstore: surface coordinator-relayed build logs as results` | `CoordinatorRelay.*` unit tests; `tests/functional/build-remote-serve-log-stream-coordinator.sh` |
 > | 2 (cancel doesn't stop the build) | `libstore: make coordinator cancellation actually stop the build` | `tests/functional/build-dedup-cancel-last.sh` |
 > | 3 (duplicate fail-loud tail) + 4 (signal→exit-code downgrade) | `nix: fix remote-failure rendering (duplicate tail, hook status)` | extended `tests/functional/build-remote-fail-loud.sh` |
+> | 5 (`ResourceExhausted` not surfaced end-to-end) | `libstore: render the OOM classification in the build error`, then `nix build: emit per-derivation BuildResults on failure with --json` — the design decision being that the structured surface is `nix build --json`, whose failure entries carry `failureClass` / `killedForMemory` / `peakMemoryBytes` | extended `tests/functional/build-remote-fail-loud.sh`; `tests/functional/build-json-failures.sh` |
+> | 6 (new-CLI `nix build --store ssh://` build gap) | `libstore: let the new CLI build on ssh:// stores` (a `LegacySSHStore::buildPathsWithResults` over the serve `BuildDerivation` command) | extended `tests/functional/store-split-serve.sh` |
 >
 > **Re-verified end-to-end:** the matrix was re-run on this kind cluster
 > against an image built from the fixed branch
 > (`2.35.0pre20260610_7424297`, run `124040`): **10/10 PASS**, including
 > the two previous failures — `2-live-streaming` (log lines visible
 > mid-build on `ssh://` and `ssh-ng://`) and `5b-refcount-cancel`
-> (builds before=1, after-kill-one=1, after-kill-both=0).
+> (builds before=1, after-kill-one=1, after-kill-both=0). That re-run
+> predates the fixes for anomalies 5 and 6, which are so far covered by
+> the functional/unit tests above; the phase-3 (Hetzner) run should
+> exercise them over real SSH.
 >
-> Anomalies 5 (`ResourceExhausted` not surfaced end-to-end) and 6
-> (new-CLI `nix build --store ssh://` build gap) remain open — both need
-> a small design decision rather than a contained patch.
 > Incidental finding while writing the killed-builder test: a sandboxed
 > builder is PID 1 of its pid namespace, so a *self*-sent SIGKILL is
 > silently dropped by the kernel, and chroot stores force the sandbox on
@@ -141,6 +143,12 @@ single error block correctly says signal 9.
 
 ### 5. `ResourceExhausted` / resource hint not observable end-to-end
 
+**Since fixed on the protocol branch** (see the status table at the top):
+the error text now renders the OOM classification (with peak memory when
+measured), and `nix build --json` emits per-derivation `BuildResult`s on
+failure carrying `failureClass` / `killedForMemory` / `peakMemoryBytes` —
+exactly the surface suggested below. Original finding:
+
 Per the branch source, SIGKILL'd builds set
 `failureClass = ResourceExhausted` and a "possibly OOM-killer" hint on the
 `BuildResult`. Surfaces checked: hook+`ssh://` error text, direct
@@ -151,6 +159,11 @@ off `ResourceExhausted`, some CLI/JSON surface needs to carry it (e.g.
 `nix build --json --keep-going` emitting per-drv BuildResults).
 
 ### 6. `nix build --store ssh://` (new CLI) cannot build at all
+
+**Since fixed on the protocol branch** (see the status table at the top):
+`LegacySSHStore` gained `buildPathsWithResults` over the serve
+`BuildDerivation` command, so the new CLI builds on `ssh://` stores.
+Original finding:
 
 `nix build -f … --store ssh://builder-1.builders --eval-store auto` fails
 with `error: Unable to build with a primary store that isn't a local store;
