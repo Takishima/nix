@@ -4,6 +4,7 @@
 #include "nix/util/pool.hh"
 #include "nix/store/remote-store.hh"
 #include "nix/store/common-protocol.hh"
+#include "nix/store/remote-fs-accessor.hh"
 #include "nix/store/serve-protocol.hh"
 #include "nix/store/serve-protocol-connection.hh"
 #include "nix/store/serve-protocol-impl.hh"
@@ -184,6 +185,19 @@ void LegacySSHStore::narFromPath(const StorePath & path, fun<void(Source &)> rec
     conn->narFromPath(*this, path, receiveNar);
 }
 
+// The serve protocol has no file-level read command: access store
+// objects by streaming whole NARs (cached).
+
+ref<SourceAccessor> LegacySSHStore::getFSAccessor(bool requireValidPath)
+{
+    return make_ref<RemoteFSAccessor>(ref<Store>(shared_from_this()), requireValidPath);
+}
+
+std::shared_ptr<SourceAccessor> LegacySSHStore::getFSAccessor(const StorePath & path, bool requireValidPath)
+{
+    return make_ref<RemoteFSAccessor>(ref<Store>(shared_from_this()), requireValidPath)->accessObject(path);
+}
+
 static ServeProto::BuildOptions buildSettings()
 {
     return {
@@ -218,8 +232,9 @@ fun<BuildResult()> LegacySSHStore::buildDerivationAsync(
 void LegacySSHStore::buildPaths(
     const std::vector<DerivedPath> & drvPaths, BuildMode buildMode, std::shared_ptr<Store> evalStore)
 {
-    if (evalStore && evalStore.get() != this)
-        throw Error("building on an SSH store is incompatible with '--eval-store'");
+    // `nix-store --serve` disables substitutes, so also copy input outputs
+    // already realised in the eval store; the remote builds the rest.
+    copyDrvsFromEvalStore(drvPaths, evalStore, /*includeOutputs=*/true);
 
     auto conn(connections->get());
 
@@ -258,6 +273,44 @@ void LegacySSHStore::buildPaths(
         conn->from >> errorMsg;
         throw BuildError(*failure, std::move(errorMsg));
     }
+}
+
+std::vector<KeyedBuildResult> LegacySSHStore::buildPathsWithResults(
+    const std::vector<DerivedPath> & reqs, BuildMode buildMode, std::shared_ptr<Store> evalStore)
+{
+    /* The inherited implementation schedules an in-process Worker, which
+       refuses a non-local primary store; answer per-derivation via the
+       serve `BuildDerivation` command instead. */
+    copyDrvsFromEvalStore(reqs, evalStore, /*includeOutputs=*/true);
+
+    auto & drvStore = evalStore ? *evalStore : static_cast<Store &>(*this);
+
+    std::vector<KeyedBuildResult> results;
+    results.reserve(reqs.size());
+
+    for (auto & req : reqs) {
+        auto * bfd = std::get_if<DerivedPath::Built>(&req);
+        if (!bfd)
+            throw Error(
+                "wanted to fetch '%s' but the legacy ssh protocol doesn't support merely substituting paths via the build paths command. It would build them instead. Try using ssh-ng://",
+                req.to_string(*this));
+        auto * drvPath = std::get_if<SingleDerivedPath::Opaque>(&bfd->drvPath->raw());
+        if (!drvPath)
+            throw Error(
+                "wanted to build '%s', but the legacy ssh protocol doesn't support building a derivation that is itself a build product. Try using ssh-ng://",
+                req.to_string(*this));
+
+        auto res = buildDerivation(drvPath->path, drvStore.readDerivation(drvPath->path), buildMode);
+
+        // Report only the requested outputs, like the in-process goals do.
+        if (auto * success = res.tryGetSuccess())
+            if (auto * names = std::get_if<OutputsSpec::Names>(&bfd->outputs.raw))
+                std::erase_if(success->builtOutputs, [&](auto & e) { return !names->contains(e.first); });
+
+        results.emplace_back(std::move(res), req);
+    }
+
+    return results;
 }
 
 void LegacySSHStore::computeFSClosure(
