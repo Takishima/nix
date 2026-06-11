@@ -178,6 +178,11 @@ enum struct ServeProto::Command : uint64_t {
     QueryClosure = 7,
     BuildDerivation = 8,
     AddToStoreNar = 9,
+    /**
+     * Fetch a build log by derivation path. Provisional: only available
+     * at serve version 2.9 (`ServeProto::unstableDiagnostics`).
+     */
+    QueryBuildLog = 10,
 };
 
 struct ServeProto::BuildOptions

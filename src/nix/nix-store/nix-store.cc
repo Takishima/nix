@@ -907,7 +907,9 @@ static void opServe(Strings opFlags, Strings opArgs)
         // FIXME: changing options here doesn't work if we're
         // building through the daemon.
         verbosity = lvlError;
-        settings.getLogFileSettings().keepLog = false;
+        // Persist the log only when the client can fetch it back
+        // (`QueryBuildLog`); otherwise keep the historical suppression.
+        settings.getLogFileSettings().keepLog = ServeProto::supportsDiagnostics(clientVersion);
         settings.getWorkerSettings().useSubstitutes = false;
 
         auto options = ServeProto::Serialise<ServeProto::BuildOptions>::read(*store, rconn);
@@ -1079,6 +1081,21 @@ static void opServe(Strings opFlags, Strings opArgs)
 
             out << 1; // indicate success
 
+            break;
+        }
+
+        case ServeProto::Command::QueryBuildLog: {
+            // Below 2.9 this is an unknown command, exactly as on an older
+            // server.
+            if (!ServeProto::supportsDiagnostics(clientVersion))
+                throw Error("unknown serve command %1%", cmd);
+            auto drvPath = store->parseStorePath(readString(in));
+            auto & logStore = require<LogStore>(*store);
+            auto log = logStore.getBuildLogExact(drvPath);
+            // A presence flag, then the contents.
+            out << (log ? 1 : 0);
+            if (log)
+                out << *log;
             break;
         }
 

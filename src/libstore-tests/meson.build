@@ -85,6 +85,7 @@ sources = files(
   'references.cc',
   's3-binary-cache-store.cc',
   's3-url.cc',
+  'serve-diag-core.cc',
   'serve-protocol.cc',
   'ssh-store.cc',
   'store-open.cc',

@@ -3,6 +3,7 @@
 
 #include "nix/store/common-ssh-store-config.hh"
 #include "nix/store/store-api.hh"
+#include "nix/store/log-store.hh"
 #include "nix/store/ssh.hh"
 #include "nix/util/callback.hh"
 #include "nix/util/pool.hh"
@@ -65,7 +66,7 @@ public:
     StoreReference getReference() const override;
 };
 
-struct LegacySSHStore : public virtual Store
+struct LegacySSHStore : public virtual Store, public virtual LogStore
 {
 private:
     void anchor() override;
@@ -93,6 +94,20 @@ public:
     void addToStore(const ValidPathInfo & info, Source & source, RepairFlag repair, CheckSigsFlag checkSigs) override;
 
     void narFromPath(const StorePath & path, Sink & sink) override;
+
+    /**
+     * Fetch a build log via `QueryBuildLog` (serve >= 2.9); on an older
+     * remote there is simply no log here, as before.
+     */
+    std::optional<std::string> getBuildLogExact(const StorePath & path) override;
+
+    /**
+     * The serve protocol has no client->server "add log" operation.
+     */
+    void addBuildLog(const StorePath & path, std::string_view log) override
+    {
+        unsupported("addBuildLog");
+    }
 
     /**
      * Hands over the connection temporarily as source to the given

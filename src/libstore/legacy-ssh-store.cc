@@ -286,6 +286,21 @@ StorePathSet LegacySSHStore::queryValidPaths(const StorePathSet & paths, bool lo
     return conn->queryValidPaths(*this, lock, paths, maybeSubstitute);
 }
 
+std::optional<std::string> LegacySSHStore::getBuildLogExact(const StorePath & path)
+{
+    auto conn(connections->get());
+    if (!ServeProto::supportsDiagnostics(conn->remoteVersion))
+        // Pre-2.9 remote: report "no log here" rather than failing, so
+        // `nix log` falls through to substituters as before.
+        return std::nullopt;
+    conn->to << ServeProto::Command::QueryBuildLog << printStorePath(path);
+    conn->to.flush();
+    // A presence flag, then the contents.
+    if (!readInt(conn->from))
+        return std::nullopt;
+    return readString(conn->from);
+}
+
 void LegacySSHStore::connect()
 {
     auto conn(connections->get());
