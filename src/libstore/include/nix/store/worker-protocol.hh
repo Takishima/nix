@@ -136,6 +136,14 @@ struct WorkerProto
     static constexpr std::string_view featureDisableSetOptions = "disable-set-options";
 
     /**
+     * Gates the `QueryBuildLog` op and extra `BuildResult` fields whose
+     * layout is not yet frozen. The feature string is the only thing that
+     * keeps two peers' byte streams in agreement, so any change to that
+     * layout MUST rename this string (bump the `-1` suffix).
+     */
+    static constexpr std::string_view featureBuildLogQuery = "build-log-query-1";
+
+    /**
      * A unidirectional read connection, to be used by the read half of the
      * canonical serializers below.
      */

@@ -532,6 +532,121 @@ VERSIONED_CHARACTERIZATION_TEST(
         t;
     }))
 
+/* Worker protocol with the `build-log-query` feature: the structured
+   diagnostic core (logRef/failurePhase/exitCode/logTail) is appended after
+   `builtOutputs`, followed by the deferred dedup/fleet set
+   (deduplicated/builderId). Unstable / not frozen. */
+VERSIONED_CHARACTERIZATION_TEST(
+    WorkerProtoTest,
+    buildResult_build_log_query,
+    "build-result-build-log-query",
+    (WorkerProto::Version{
+        .number =
+            {
+                .major = 1,
+                .minor = 38,
+            },
+        .features = {"realisation-with-path-not-hash", std::string{WorkerProto::featureBuildLogQuery}},
+    }),
+    ({
+        using namespace std::literals::chrono_literals;
+        std::tuple<BuildResult, BuildResult, BuildResult> t{
+            BuildResult{
+                .inner{BuildResult::Failure{{
+                    .status = BuildResult::Failure::MiscFailure,
+                    .msg = HintFmt("builder ran out of memory"),
+                }}},
+                .logRef = "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
+                .failurePhase = "build",
+                .exitCode = 137,
+                .logTail = "Killed\n",
+                .failureClass = BuildResult::FailureClass::ResourceExhausted,
+                .killedForMemory = true,
+                .peakMemoryBytes = 4509715456,
+            },
+            BuildResult{
+                .inner{BuildResult::Failure{{
+                    .status = BuildResult::Failure::NotDeterministic,
+                    .msg = HintFmt("no idea why"),
+                    .isNonDeterministic = true,
+                }}},
+                .timesBuilt = 3,
+                .startTime = 30,
+                .stopTime = 50,
+            },
+            BuildResult{
+                .inner{BuildResult::Success{
+                    .status = BuildResult::Success::Built,
+                    .builtOutputs =
+                        {
+                            {
+                                "foo",
+                                {
+                                    .outPath = StorePath{"g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo"},
+                                },
+                            },
+                        },
+                }},
+                .timesBuilt = 1,
+                .startTime = 30,
+                .stopTime = 50,
+                .cpuUser = std::chrono::microseconds(500s),
+                .cpuSystem = std::chrono::microseconds(604s),
+                .deduplicated = true,
+                .builderId = "builder-7",
+            },
+        };
+        t;
+    }))
+
+/* Back-compat, worker side: a peer WITHOUT the
+   `build-log-query` feature reads a BuildResult written WITH it, decodes the
+   base fields, and leaves the appended diagnostic-core tail unconsumed — the
+   diagnostic core is purely additive and feature-gated. */
+TEST_F(WorkerProtoTest, buildResult_buildLogQuery_readsBackCompatWithoutFeature)
+{
+    BuildResult full{
+        .inner{BuildResult::Failure{{
+            .status = BuildResult::Failure::OutputRejected,
+            .msg = HintFmt("no idea why"),
+        }}},
+        .logRef = "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
+        .failurePhase = "build",
+        .exitCode = 1,
+        .logTail = "error: command failed\n",
+    };
+    BuildResult base = full;
+    base.logRef = "";
+    base.failurePhase = "";
+    base.exitCode = 0;
+    base.logTail = "";
+
+    // Same version on both sides; only the `build-log-query` feature differs.
+    auto withFeature = WorkerProto::Version{
+        .number = {.major = 1, .minor = 38},
+        .features = {"realisation-with-path-not-hash", std::string{WorkerProto::featureBuildLogQuery}},
+    };
+    auto withoutFeature = WorkerProto::Version{
+        .number = {.major = 1, .minor = 38},
+        .features = {"realisation-with-path-not-hash"},
+    };
+
+    StringSink withTail;
+    WorkerProto::write(store, WorkerProto::WriteConn{.to = withTail, .version = withFeature}, full);
+    StringSink withoutTail;
+    WorkerProto::write(store, WorkerProto::WriteConn{.to = withoutTail, .version = withoutFeature}, base);
+
+    ASSERT_GT(withTail.s.size(), withoutTail.s.size());
+    EXPECT_EQ(withTail.s.compare(0, withoutTail.s.size(), withoutTail.s), 0);
+
+    // A feature-less reader decodes the base value and stops at the boundary.
+    StringSource source{withTail.s};
+    BuildResult got = WorkerProto::Serialise<BuildResult>::read(
+        store, WorkerProto::ReadConn{.from = source, .version = withoutFeature});
+    EXPECT_EQ(got, base);
+    EXPECT_EQ(source.pos, withoutTail.s.size());
+}
+
 VERSIONED_CHARACTERIZATION_TEST(
     WorkerProtoTest,
     keyedBuildResult_1_29,

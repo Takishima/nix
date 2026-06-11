@@ -1,0 +1,44 @@
+[
+  {
+    "errorMsg": "builder ran out of memory",
+    "exitCode": 137,
+    "failureClass": "ResourceExhausted",
+    "failurePhase": "build",
+    "isNonDeterministic": false,
+    "killedForMemory": true,
+    "logRef": "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo.drv",
+    "logTail": "Killed\n",
+    "peakMemoryBytes": 4509715456,
+    "startTime": 0,
+    "status": "MiscFailure",
+    "stopTime": 0,
+    "success": false,
+    "timesBuilt": 0
+  },
+  {
+    "errorMsg": "no idea why",
+    "isNonDeterministic": true,
+    "startTime": 30,
+    "status": "NotDeterministic",
+    "stopTime": 50,
+    "success": false,
+    "timesBuilt": 3
+  },
+  {
+    "builderId": "builder-7",
+    "builtOutputs": {
+      "foo": {
+        "outPath": "g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-foo",
+        "signatures": []
+      }
+    },
+    "cpuSystem": 604000000,
+    "cpuUser": 500000000,
+    "deduplicated": true,
+    "startTime": 30,
+    "status": "Built",
+    "stopTime": 50,
+    "success": true,
+    "timesBuilt": 1
+  }
+]
