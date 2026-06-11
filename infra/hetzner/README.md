@@ -65,7 +65,7 @@ Prerequisites (one time):
 
 ```bash
 # 1. Create the server (sandbox-runnable; HTTPS only):
-HETZNER_SSH_KEY=hetzner-bootstrap COUNT=1 SERVER_TYPE=cx32 NO_INFECT=1 ./provision.sh
+HETZNER_SSH_KEY=hetzner-bootstrap COUNT=1 SERVER_TYPE=cx33 NO_INFECT=1 ./provision.sh
 # 2. Dispatch the bootstrap-builder workflow with host=nix-builder-01 and the
 #    server's IP (from a web session: mcp__github__actions_run_trigger).
 # 3. Watch the run; the final step verifies the host rebooted into NixOS with

@@ -63,8 +63,9 @@ ssh_key_id="$(api GET "/ssh_keys?name=${HETZNER_SSH_KEY}" \
   | python3 -c 'import sys,json; ks=json.load(sys.stdin)["ssh_keys"]; print(ks[0]["id"] if ks else "")')"
 [ -n "$ssh_key_id" ] || { echo "SSH key '${HETZNER_SSH_KEY}' not found in project" >&2; exit 1; }
 
-for i in $(seq -w 1 "$COUNT"); do
-  name="${NAME_PREFIX}-${i}"
+for i in $(seq 1 "$COUNT"); do
+  # Zero-pad to match the flake's hostnames (nix-builder-01, ...).
+  name="$(printf '%s-%02d' "$NAME_PREFIX" "$i")"
   echo ">> creating ${name} (${SERVER_TYPE} @ ${LOCATION})" >&2
 
   if [ -n "${HETZNER_IMAGE:-}" ]; then
@@ -90,7 +91,7 @@ PY
 )"
 
   api POST "/servers" -d "$body" \
-    | python3 -c 'import sys,json; s=json.load(sys.stdin)["server"]; print(f"   {s[\"name\"]} ip={s[\"public_net\"][\"ipv4\"][\"ip\"]} id={s[\"id\"]}")'
+    | python3 -c 'import sys,json; s=json.load(sys.stdin)["server"]; print("   ", s["name"], "ip=" + s["public_net"]["ipv4"]["ip"], "id=" + str(s["id"]))'
 done
 
 echo ">> done. List the fleet with: api GET /servers (or hcloud server list)" >&2
