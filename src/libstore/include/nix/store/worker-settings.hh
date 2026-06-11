@@ -201,6 +201,16 @@ public:
 
              The value for this field can be obtained via `base64 -w0`.
 
+          9. Whether the machine is *self-scheduling* (`true`/`1`) — an elastic
+             or autoscaling backend that does its own scheduling. Defaults to
+             `false`.
+
+             For a self-scheduling machine, field 4 (the maximum number of
+             parallel builds) is treated as a load-balancing *hint* rather than a
+             hard cap, and Nix never postpones a build because the machine's
+             slots are all busy. Leave this off (the default) for fixed-size
+             machines so their parallelism stays capped.
+
           > **Example**
           >
           > Multiple builders specified on the command line:
@@ -271,6 +281,24 @@ public:
 
           It means that remote build hosts fetch as many dependencies as possible from their own substituters (e.g, from `cache.nixos.org`) instead of waiting for the local machine to upload them all.
           This can drastically reduce build times if the network connection between the local machine and the remote build host is slow.
+        )"};
+
+    Setting<bool> useSshNgForRemoteBuilds{
+        this,
+        false,
+        "use-ssh-ng-for-remote-builds",
+        R"(
+          When a [remote build machine](#conf-builders) is given without a URL
+          scheme (e.g. `mac` or `nix@mac` rather than `ssh://mac`), Nix has to
+          choose a transport. By default it uses the legacy *serve* protocol
+          (`ssh://`), which does not stream the remote builder's log to the
+          client.
+
+          Set this to `true` to make such schemeless builders use the
+          `ssh-ng://` transport instead, which streams build logs live and is
+          the direction remote building is converging on. Builders given with an
+          explicit scheme are unaffected. The default is `false` so existing
+          configurations keep their current transport.
         )"};
 
     Setting<bool> useSubstitutes{

@@ -50,7 +50,8 @@ struct Machine
         decltype(speedFactor) speedFactor,
         decltype(supportedFeatures) supportedFeatures,
         decltype(mandatoryFeatures) mandatoryFeatures,
-        decltype(sshPublicHostKey) sshPublicHostKey);
+        decltype(sshPublicHostKey) sshPublicHostKey,
+        bool useSshNgForRemoteBuilds = false);
 
     /**
      * Elaborate `storeUri` into a complete store reference,
@@ -76,7 +77,8 @@ struct Machine
      * with `@` are interpreted as paths to other configuration files in
      * the same format.
      */
-    static Machines parseConfig(const StringSet & defaultSystems, const std::string & config);
+    static Machines
+    parseConfig(const StringSet & defaultSystems, const std::string & config, bool useSshNgForRemoteBuilds = false);
 };
 
 } // namespace nix
