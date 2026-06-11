@@ -278,10 +278,23 @@ struct Coordinator
     std::map<int, Conn> conns;      // by control-socket fd
     std::map<int, Running> running; // by build-pipe read fd
 
-    Coordinator(std::string socketPath, std::string storeUri)
+    /** The held election lock (`${socketPath}.lock`): exclusively flocked for
+     *  the coordinator's lifetime, so a live coordinator is exactly a held
+     *  lock and the winner of `electCoordinator` may safely (re)bind the
+     *  socket. */
+    AutoCloseFD electionLock;
+
+    /** The listening control socket. Bound + listening by the election
+     *  winner *before* this process is spawned, so a client's connect can
+     *  never race the coordinator's startup. */
+    AutoCloseFD listenFd;
+
+    Coordinator(std::string socketPath, std::string storeUri, AutoCloseFD electionLock, AutoCloseFD listenFd)
         : socketPath(std::move(socketPath))
         , storeUri(std::move(storeUri))
         , parseStore(openStore(this->storeUri))
+        , electionLock(std::move(electionLock))
+        , listenFd(std::move(listenFd))
     {
     }
 
@@ -516,8 +529,6 @@ struct Coordinator
 
     [[noreturn]] void run()
     {
-        AutoCloseFD listenFd = createUnixDomainSocket(socketPath, 0600);
-
         int idleTicks = 0;
         while (true) {
             std::vector<pollfd> fds;
@@ -593,33 +604,78 @@ struct Coordinator
 };
 
 /** Win the right to be *the* coordinator for this socket (the election):
- *  an exclusive lock on `${socketPath}.lock`. Losers exit; their relay connects
- *  to the winner. */
+ *  an exclusive lock on `${socketPath}.lock`. Returns a closed fd when
+ *  another process holds the lock (it is — or is becoming — the
+ *  coordinator); throws when the lock file cannot be used at all (an
+ *  unusable socket location should fail loudly, not look like a lost
+ *  election and be retried). */
 AutoCloseFD electCoordinator(const std::string & socketPath)
 {
     auto lockPath = socketPath + ".lock";
     AutoCloseFD lock{open(lockPath.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600)};
     if (!lock)
-        return {};
-    if (flock(lock.get(), LOCK_EX | LOCK_NB) != 0)
-        return {}; // someone else is (starting to be) the coordinator
+        throw SysError("opening the coordinator election lock '%s'", lockPath);
+    if (flock(lock.get(), LOCK_EX | LOCK_NB) != 0) {
+        if (errno == EWOULDBLOCK)
+            return {}; // someone else is (starting to be) the coordinator
+        throw SysError("locking the coordinator election lock '%s'", lockPath);
+    }
     return lock;
 }
 
-void spawnCoordinator(const std::string & socketPath, const std::string & storeUri)
+/** Spawn the coordinator process for an election already won: it inherits
+ *  (and from then on owns) the held election lock and the already-listening
+ *  control socket. The caller's copies of both fds close when the arguments
+ *  go out of scope; the child's inherited descriptors keep the underlying
+ *  open file descriptions — and thus the `flock` and the socket — alive. */
+void spawnCoordinator(
+    const std::string & socketPath, const std::string & storeUri, AutoCloseFD electionLock, AutoCloseFD listenFd)
 {
     ProcessOptions opts;
     opts.dieWithParent = false; // outlives the spawning connection
     startProcess(
         [&]() {
             ::setsid();
-            auto lock = electCoordinator(socketPath);
-            if (!lock)
-                return; // lost the election; the winner serves
-            Coordinator coord{socketPath, storeUri};
+            Coordinator coord{socketPath, storeUri, std::move(electionLock), std::move(listenFd)};
             coord.run(); // [[noreturn]]
         },
         opts);
+}
+
+/** One *non-blocking* attempt to reach the coordinator for `socketPath`,
+ *  becoming its host if there is none: connect if one is up; otherwise run
+ *  the election, and on a win bind + listen *here* — before spawning the
+ *  coordinator — so the subsequent connect cannot race its startup (no
+ *  sleep-and-retry handshake). Returns a closed fd only in the narrow
+ *  lost-election race (another process is between taking the lock and
+ *  binding); the caller decides how to wait before retrying. */
+AutoCloseFD connectToCoordinator(const std::string & socketPath, const std::string & storeUri)
+{
+    // Fast path: a coordinator is already serving.
+    try {
+        return nix::connect(socketPath);
+    } catch (SysError &) {
+    }
+
+    // Nothing serving: run the election ourselves.
+    if (auto lock = electCoordinator(socketPath)) {
+        // We won: any existing socket file is stale (a live coordinator
+        // would hold the lock), so bind over it and hand both fds to the
+        // spawned coordinator. Connections queue in the listen backlog
+        // until it starts accepting.
+        auto listenFd = createUnixDomainSocket(socketPath, 0600);
+        spawnCoordinator(socketPath, storeUri, std::move(lock), std::move(listenFd));
+        return nix::connect(socketPath);
+    }
+
+    // Lost the election. The winner binds before it spawns, so the window
+    // in which the socket is not yet connectable is tiny: try once more,
+    // and only genuinely mid-race failures bounce back to the caller.
+    try {
+        return nix::connect(socketPath);
+    } catch (SysError &) {
+        return {};
+    }
 }
 
 } // namespace
@@ -695,13 +751,14 @@ CoordinatorRelayPump::CoordinatorRelayPump(Logger & logger, const std::string & 
 
 CoordinatorRelayPump::~CoordinatorRelayPump() = default;
 CoordinatorRelayPump::CoordinatorRelayPump(CoordinatorRelayPump &&) noexcept = default;
+CoordinatorRelayPump & CoordinatorRelayPump::operator=(CoordinatorRelayPump &&) noexcept = default;
 
 std::optional<BuildResult> CoordinatorRelayPump::feed(std::string_view data)
 {
     return impl->feed(data);
 }
 
-CoordinatorRelaySession startCoordinatorRelay(
+std::optional<CoordinatorRelaySession> tryStartCoordinatorRelay(
     Store & store,
     const StorePath & drvPath,
     const BasicDerivation & drv,
@@ -709,23 +766,9 @@ CoordinatorRelaySession startCoordinatorRelay(
     Logger & logger,
     bool trusted)
 {
-    auto storeUri = coordinatorStoreUri(store);
-    auto socketPath = coordinatorSocketPath(store);
-    // Connect, lazily spawning the coordinator if absent (decline-and-respawn).
-    AutoCloseFD fd;
-    for (int attempt = 0; attempt < 50; ++attempt) {
-        checkInterrupt();
-        try {
-            fd = nix::connect(socketPath);
-            break;
-        } catch (SysError &) {
-            if (attempt == 0)
-                spawnCoordinator(socketPath, storeUri);
-            usleep(100000); // 100ms backoff while it comes up
-        }
-    }
+    auto fd = connectToCoordinator(coordinatorSocketPath(store), coordinatorStoreUri(store));
     if (!fd)
-        throw Error("could not reach the build coordinator at '%s'", socketPath);
+        return std::nullopt; // lost-election race; the caller schedules a retry
 
     // START_OR_ATTACH (keyed on the resolved drv — a BasicDerivation).
     {
@@ -743,6 +786,23 @@ CoordinatorRelaySession startCoordinatorRelay(
         .socket = std::move(fd),
         .pump = CoordinatorRelayPump(logger, store.printStorePath(drvPath)),
     };
+}
+
+CoordinatorRelaySession startCoordinatorRelay(
+    Store & store,
+    const StorePath & drvPath,
+    const BasicDerivation & drv,
+    BuildMode buildMode,
+    Logger & logger,
+    bool trusted)
+{
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        checkInterrupt();
+        if (auto session = tryStartCoordinatorRelay(store, drvPath, drv, buildMode, logger, trusted))
+            return std::move(*session);
+        usleep(100000); // 100ms backoff for the lost-election race
+    }
+    throw Error("could not reach the build coordinator at '%s'", coordinatorSocketPath(store));
 }
 
 BuildResult relayBuildToCoordinator(
@@ -827,7 +887,8 @@ void runBuildCoordinator(const std::string & socketPath, const std::string & sto
     auto lock = electCoordinator(socketPath);
     if (!lock)
         _exit(0);
-    Coordinator coord{socketPath, storeUri};
+    auto listenFd = createUnixDomainSocket(socketPath, 0600);
+    Coordinator coord{socketPath, storeUri, std::move(lock), std::move(listenFd)};
     coord.run();
 }
 

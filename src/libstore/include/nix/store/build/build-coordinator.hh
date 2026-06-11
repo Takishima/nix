@@ -76,6 +76,7 @@ public:
     CoordinatorRelayPump(Logger & logger, const std::string & drvPathStr);
     ~CoordinatorRelayPump();
     CoordinatorRelayPump(CoordinatorRelayPump &&) noexcept;
+    CoordinatorRelayPump & operator=(CoordinatorRelayPump &&) noexcept;
 
     /**
      * Feed raw control-socket bytes. Returns the final `BuildResult` once the
@@ -103,10 +104,33 @@ struct CoordinatorRelaySession
 };
 
 /**
- * Connect to `store`'s coordinator (lazily spawning it) and subscribe to the
- * build of `drvPath`/`drv` (`START_OR_ATTACH`), returning the in-flight
- * session. The arguments are those of `relayBuildToCoordinator`, which is
- * equivalent to draining the returned session with blocking reads.
+ * One *non-blocking* attempt to connect to `store`'s coordinator and
+ * subscribe to the build of `drvPath`/`drv` (`START_OR_ATTACH`), returning
+ * the in-flight session. When no coordinator is up, the caller itself runs
+ * the election; the winner binds the control socket before spawning the
+ * coordinator process, so the connect cannot race its startup and the
+ * common cold-start path involves no waiting at all. The only
+ * `std::nullopt` case is the narrow lost-election race (another process is
+ * between taking the election lock and binding) — the caller chooses how to
+ * wait before retrying (an event-loop caller suspends; see
+ * `startCoordinatorRelay` for the blocking form). An unusable socket
+ * location throws instead of looking like a coordinator that never comes
+ * up.
+ */
+std::optional<CoordinatorRelaySession> tryStartCoordinatorRelay(
+    Store & store,
+    const StorePath & drvPath,
+    const BasicDerivation & drv,
+    BuildMode buildMode,
+    Logger & logger,
+    bool trusted);
+
+/**
+ * The blocking form of `tryStartCoordinatorRelay`, for one-op-per-process
+ * callers (the daemon's `BuildDerivation` branch): retries the
+ * lost-election race with a short backoff. The arguments are those of
+ * `relayBuildToCoordinator`, which is equivalent to draining the returned
+ * session with blocking reads.
  */
 CoordinatorRelaySession startCoordinatorRelay(
     Store & store,

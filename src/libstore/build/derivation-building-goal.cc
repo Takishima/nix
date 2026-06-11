@@ -467,7 +467,19 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
         && getEnv("NIX_BUILD_COORDINATOR_INNER").value_or("").empty()
         && dynamic_cast<LocalStore *>(&worker.store)) {
         {
-            auto relay = startCoordinatorRelay(worker.store, drvPath, *drv, buildMode, *logger, /*trusted=*/true);
+            /* The connect/spawn handshake is non-blocking: the only retry
+               case is the narrow lost-election race, waited out on the
+               worker's event loop rather than in-goal. */
+            std::optional<CoordinatorRelaySession> relayAttempt;
+            for (int attempt = 0;
+                 !(relayAttempt = tryStartCoordinatorRelay(worker.store, drvPath, *drv, buildMode, *logger, /*trusted=*/true));
+                 ++attempt) {
+                if (attempt >= 10)
+                    throw Error(
+                        "could not reach the build coordinator for '%s'", worker.store.printStorePath(drvPath));
+                co_await waitForAWhile();
+            }
+            auto relay = std::move(*relayAttempt);
             worker.childStarted(
                 shared_from_this(), {relay.socket.get()}, /*inBuildSlot=*/false, /*respectTimeouts=*/false);
 
