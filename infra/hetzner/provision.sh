@@ -23,6 +23,9 @@
 #   LOCATION=nbg1       Hetzner location
 #   NAME_PREFIX=nix-builder
 #   HETZNER_IMAGE       NixOS snapshot ID (enables snapshot mode)
+#   NO_INFECT=1         Create plain Ubuntu servers with no user_data; pair with
+#                       the bootstrap-builder GitHub Actions workflow, which
+#                       installs the flake via nixos-anywhere (recommended path)
 #
 set -euo pipefail
 
@@ -66,6 +69,9 @@ for i in $(seq -w 1 "$COUNT"); do
 
   if [ -n "${HETZNER_IMAGE:-}" ]; then
     image="${HETZNER_IMAGE}"
+    user_data=""
+  elif [ -n "${NO_INFECT:-}" ]; then
+    image="ubuntu-24.04"
     user_data=""
   else
     image="ubuntu-24.04"

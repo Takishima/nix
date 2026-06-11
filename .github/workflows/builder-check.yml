@@ -1,0 +1,43 @@
+name: builder-check
+
+# Read-only health probe for a Hetzner builder, runnable on demand. This exists
+# because the Claude Code web sandbox has no outbound SSH: a web session
+# triggers this workflow and reads the logs to observe builder state (deployed
+# revision, comin status, store health) without ever opening port 22 itself.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ip:
+        description: "Public IPv4 of the builder"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.BUILDER_SSH_PRIVATE_KEY }}" > ~/.ssh/builder
+          chmod 600 ~/.ssh/builder
+
+      - name: Probe builder over SSH
+        run: |
+          ssh -i ~/.ssh/builder \
+              -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=15 \
+              "root@${{ inputs.target_ip }}" <<'EOF'
+          set -x
+          hostname
+          nixos-version
+          nixos-version --configuration-revision || true
+          systemctl is-active comin
+          journalctl -u comin --no-pager -n 30 || true
+          nix --version
+          df -h / /nix 2>/dev/null || df -h /
+          EOF

@@ -1,0 +1,64 @@
+name: bootstrap-builder
+
+# One-shot bootstrap of a Hetzner builder VM: installs
+# infra/hetzner#nixosConfigurations.<host> onto a fresh server with
+# nixos-anywhere (kexec + disko). Runs on a GitHub-hosted runner because the
+# Claude Code web sandbox has no outbound SSH. After this completes once, all
+# further config deploys happen via comin (GitOps pull) — see infra/hetzner/README.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: "Flake host to install (nixosConfigurations.<host>)"
+        required: true
+        default: nix-builder-01
+      target_ip:
+        description: "Public IPv4 of the target server (root must authorize BUILDER_SSH_PRIVATE_KEY)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/install-nix-action
+        with:
+          dogfood: false
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.BUILDER_SSH_PRIVATE_KEY }}" > ~/.ssh/builder
+          chmod 600 ~/.ssh/builder
+
+      - name: Install NixOS with nixos-anywhere
+        run: |
+          nix run github:nix-community/nixos-anywhere -- \
+            --flake "./infra/hetzner#${{ inputs.host }}" \
+            -i ~/.ssh/builder \
+            --ssh-option StrictHostKeyChecking=accept-new \
+            "root@${{ inputs.target_ip }}"
+
+      - name: Wait for reboot and verify
+        run: |
+          for i in $(seq 1 30); do
+            if ssh -i ~/.ssh/builder -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+                 -o ConnectTimeout=10 "root@${{ inputs.target_ip }}" \
+                 'nixos-version && systemctl is-active comin && nix --version'; then
+              echo "builder is up and comin is active"
+              exit 0
+            fi
+            echo "not up yet (attempt $i); retrying in 10s"
+            sleep 10
+          done
+          echo "builder did not come back up" >&2
+          exit 1

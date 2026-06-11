@@ -53,18 +53,30 @@ web session  <--commit status (GitHub MCP)--  report-deploy-status on each build
 
 ## Bootstrap (turn fresh servers into NixOS builders)
 
-Recommended: create one golden image, then clone it.
+Recommended: the **`bootstrap-builder` GitHub Actions workflow**. A web session
+creates the server over the Hetzner HTTPS API, then dispatches the workflow; a
+GitHub-hosted runner (which *does* have SSH) runs `nixos-anywhere` to kexec the
+fresh server and install `nixosConfigurations.<host>` exactly as committed,
+including the disko layout. Afterwards `comin` owns all config updates.
+
+Prerequisites (one time):
+- Repo Actions secret `BUILDER_SSH_PRIVATE_KEY`: a private key whose public half
+  is attached to the server at creation (uploaded to the Hetzner project).
 
 ```bash
-# First time: convert a fresh server to NixOS, finish the flake switch once,
-# then snapshot it in the Hetzner console.
-HETZNER_SSH_KEY=my-key COUNT=1 ./provision.sh           # infect mode
-
-# Steady state: clone the snapshot — instant, reproducible builders.
-HETZNER_SSH_KEY=my-key HETZNER_IMAGE=<snapshot-id> COUNT=2 ./provision.sh
+# 1. Create the server (sandbox-runnable; HTTPS only):
+HETZNER_SSH_KEY=hetzner-bootstrap COUNT=1 SERVER_TYPE=cx32 NO_INFECT=1 ./provision.sh
+# 2. Dispatch the bootstrap-builder workflow with host=nix-builder-01 and the
+#    server's IP (from a web session: mcp__github__actions_run_trigger).
+# 3. Watch the run; the final step verifies the host rebooted into NixOS with
+#    comin active. Later health checks: dispatch the builder-check workflow.
 ```
 
-`provision.sh` uses only the Hetzner HTTPS API, so it runs from a web session.
+The `nixos-infect` mode in `provision.sh` (no `NO_INFECT=1`) converts a server
+to a channel-based NixOS without any SSH at all, but **do not switch an
+infected machine onto this flake**: the disko-declared `fileSystems` here
+describe the layout `nixos-anywhere` creates, which does not match an infected
+image's existing partitions. Treat infect mode as an escape hatch only.
 
 ## Deploy config changes (the everyday loop)
 
