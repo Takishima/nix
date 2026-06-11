@@ -664,6 +664,10 @@ struct Coordinator
                 throw SysError("coordinator poll");
             }
 
+            /* Evaluate per-subscriber deadlines on every wakeup, including
+               idle ticks: a deadline must fire even when no fd is active. */
+            registry->checkDeadlines(::time(nullptr));
+
             if (n == 0) { // idle tick
                 if (conns.empty() && running.empty() && ++idleTicks >= 2)
                     break; // idle-exit; the next build lazily respawns
