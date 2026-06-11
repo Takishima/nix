@@ -43,6 +43,18 @@ BuildResult ServeProto::Serialise<BuildResult>::read(const StoreDirConfig & stor
         }
     }
 
+    if (conn.version >= ServeProto::Version{2, 9}) {
+        uint64_t exitCode = 0;
+        conn.from >> res.logRef >> res.failurePhase >> exitCode >> res.logTail;
+        res.exitCode = (int64_t) exitCode;
+        // The dedup/fleet fields follow the diagnostic core so the core's
+        // layout can freeze first.
+        conn.from >> res.builderId >> res.deduplicated;
+        uint64_t failureClass = 0;
+        conn.from >> failureClass >> res.killedForMemory >> res.peakMemoryBytes;
+        res.failureClass = (BuildResult::FailureClass) failureClass;
+    }
+
     res.inner = std::visit(
         overloaded{
             [&](BuildResult::Success::Status s) -> decltype(res.inner) {
@@ -93,6 +105,13 @@ void ServeProto::Serialise<BuildResult>::write(
                 sm[dummyId] = j.dump();
             }
             ServeProto::write(store, conn, sm);
+        }
+
+        if (conn.version >= ServeProto::Version{2, 9}) {
+            conn.to << res.logRef << res.failurePhase << (uint64_t) res.exitCode << res.logTail;
+            // Dedup/fleet fields follow the core, as on the read side.
+            conn.to << res.builderId << res.deduplicated;
+            conn.to << (uint64_t) res.failureClass << res.killedForMemory << res.peakMemoryBytes;
         }
     };
 
