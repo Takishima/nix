@@ -658,8 +658,11 @@ static void performOp(
                per-store coordinator for cross-client dedup / attach / log
                fan-out instead of building in-process. The relay re-emits the
                shared build's frames through `logger` (the TunnelLogger here),
-               so the client wire is unchanged. */
-            if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator))
+               so the client wire is unchanged. Only normal builds: the
+               registry keys on the resolved derivation alone, so a relayed
+               repair/check build could attach to (or be attached by) a normal
+               build and silently lose its semantics. */
+            if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator) && buildMode == bmNormal)
                 return relayBuildToCoordinator(*store, drvPath, drv, buildMode, *logger, trusted);
             return store->buildDerivation(drvPath, drv, buildMode);
         }();
