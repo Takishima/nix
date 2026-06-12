@@ -314,6 +314,17 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
             `--coordinator` role, crash recovery) and the deferred dedup wire
             fields (`deduplicated`/`builderId`) are still maturing.
 
+            A daemon process whose store forwards builds to another daemon
+            (e.g. an unprivileged `nix-daemon --stdio` serving an `ssh-ng://`
+            connection on top of the root daemon's socket) does not coordinate
+            itself: it delegates to the daemon that executes the build, so all
+            clients — root and non-root, across separate `--stdio` processes —
+            share that daemon's single coordinator, and no extra directories,
+            groups or socket permissions are needed. If coordination is
+            genuinely impossible (the coordinator socket location is not
+            writable by the building process), the build degrades to an
+            ordinary uncoordinated build with a warning instead of failing.
+
             Current limitations: a coordinated build does not honour the
             requesting client's `keep-failed` or `timeout`/`max-silent-time`
             settings (the shared build is not owned by any one client, and

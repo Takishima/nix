@@ -108,6 +108,8 @@ in
 
   remoteBuildsSshNg = runNixOSTest ./remote-builds-ssh-ng.nix;
 
+  remoteBuildsSshNgDedup = runNixOSTest ./remote-builds-ssh-ng-dedup.nix;
+
 }
 // lib.concatMapAttrs (
   nixVersion:

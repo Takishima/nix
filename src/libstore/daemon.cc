@@ -659,12 +659,20 @@ static void performOp(
                relayed repair/check build could coalesce with a normal one
                and silently lose its semantics. */
             if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator) && buildMode == bmNormal) {
-                try {
-                    return relayBuildToCoordinator(*store, drvPath, drv, buildMode, *logger, trusted);
-                } catch (CoordinatorUnavailable & e) {
-                    // Dedup is lost, the build must not be.
-                    logger->warn(
-                        fmt("%s; building '%s' without build dedup", e.message(), store->printStorePath(drvPath)));
+                /* A store that forwards builds to another daemon (e.g. an
+                   unprivileged `nix-daemon --stdio` on top of the root
+                   daemon's socket) must not coordinate here: it cannot bind
+                   under the daemon's state dir, and the daemon that
+                   executes the build relays this very op itself — one
+                   coordinator, shared by root and non-root clients alike. */
+                if (!dynamic_cast<RemoteStore *>(&*store)) {
+                    try {
+                        return relayBuildToCoordinator(*store, drvPath, drv, buildMode, *logger, trusted);
+                    } catch (CoordinatorUnavailable & e) {
+                        // Dedup is lost, the build must not be.
+                        logger->warn(
+                            fmt("%s; building '%s' without build dedup", e.message(), store->printStorePath(drvPath)));
+                    }
                 }
             }
             return store->buildDerivation(drvPath, drv, buildMode);
