@@ -66,10 +66,6 @@ bool readN(int fd, char * buf, size_t n)
     return true;
 }
 
-/** Sanity cap on a single record, so a buggy or hostile peer cannot make
- *  us allocate an arbitrary amount from a 32-bit length prefix. */
-constexpr uint32_t maxRecordLen = 256u << 20;
-
 /* Retry budget for the two transient connect races: the lost election
    (a microseconds-wide window between lock and bind) and the idle-exit
    race (EOF before any byte). Deliberately generous. */

@@ -7,6 +7,7 @@
 /// daemon shares no `Worker` across connections. Everything here is below
 /// the client wire, so there is no flag day.
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -154,6 +155,10 @@ constexpr char MSG_ACTIVE = 'A';
 /// attach timeout. Decoders ignore unknown tags, so an old peer that does not
 /// know this tag simply sees the close.
 constexpr char MSG_INCOMPATIBLE = 'I';
+
+/** Sanity cap on a single record, so a buggy or hostile peer cannot make
+ *  us allocate an arbitrary amount from a 32-bit length prefix. */
+constexpr uint32_t maxRecordLen = 256u << 20;
 } // namespace coordinator_proto
 
 /**

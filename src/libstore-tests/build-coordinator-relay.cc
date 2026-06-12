@@ -277,6 +277,94 @@ TEST(CoordinatorRelay, incrementalByteFeedDecodesAcrossSplits)
     }
 }
 
+/* A record length prefix beyond the sanity cap must be rejected on the
+   prefix alone — before any payload arrives, so a buggy or hostile peer
+   cannot make the relay allocate an arbitrary amount from 4 bytes. */
+TEST(CoordinatorRelay, oversizedRecordLengthIsRejectedOnThePrefixAlone)
+{
+    BufStringSink wire;
+    ServeTunnelLogger tunnel(wire);
+    tunnel.startWork();
+
+    CoordinatorRelayPump pump(tunnel, "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-x.drv");
+    uint32_t len = coordinator_proto::maxRecordLen + 1;
+    std::string prefix;
+    prefix.resize(4);
+    memcpy(prefix.data(), &len, 4);
+    EXPECT_THROW(pump.feed(prefix), Error);
+}
+
+/* EOF before MSG_RESULT is how a coordinator dying mid-build reaches the
+   relay; it must surface as an error (the callers degrade on it), never
+   as a silent or successful return. */
+TEST(CoordinatorRelay, eofWithoutAResultThrows)
+{
+    BufStringSink wire;
+    ServeTunnelLogger tunnel(wire);
+    tunnel.startWork();
+
+    EXPECT_THROW(pump({frameRec("one\n")}, tunnel), Error);
+}
+
+/* `receivedAnything` is what the callers branch on to tell the retryable
+   idle-exit race (EOF before any byte) from a death mid-stream (degrade);
+   any byte counts, not only complete records. */
+TEST(CoordinatorRelay, receivedAnythingTellsEofBeforeBytesFromEofMidStream)
+{
+    BufStringSink wire;
+    ServeTunnelLogger tunnel(wire);
+    tunnel.startWork();
+
+    CoordinatorRelayPump pump(tunnel, "/nix/store/g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-x.drv");
+    EXPECT_FALSE(pump.receivedAnything());
+    pump.feed("");
+    EXPECT_FALSE(pump.receivedAnything());
+    pump.feed(std::string_view("\x01", 1)); // a lone partial length prefix
+    EXPECT_TRUE(pump.receivedAnything());
+}
+
+/* Unknown record tags must be skipped, not rejected: that is the
+   forward-compatibility rule new coordinator→child records (such as the
+   ATTACHED ack once) rely on to roll out without a flag day. */
+TEST(CoordinatorRelay, unknownRecordTagsAreSkipped)
+{
+    BufStringSink wire;
+    ServeTunnelLogger tunnel(wire);
+    tunnel.startWork();
+
+    std::string unknown = "Zfuture payload"; // 'Z' is no coordinator_proto tag
+    auto res = pump({unknown, frameRec("one\n"), resultRec(successResult())}, tunnel);
+
+    tunnel.stopWork();
+    wire.flush();
+
+    EXPECT_TRUE(res.tryGetSuccess() != nullptr);
+    auto decoded = decodeServeWire(wire.s);
+    ASSERT_EQ(decoded.buildLogLines.size(), 1u);
+    EXPECT_EQ(decoded.buildLogLines[0], "one");
+}
+
+/* A final log line without a trailing newline is flushed when the result
+   arrives, so a builder's last words are never dropped. Degenerate
+   records — an empty body, a frame with no payload — are skipped. */
+TEST(CoordinatorRelay, unterminatedFinalLineIsFlushedByTheResult)
+{
+    BufStringSink wire;
+    ServeTunnelLogger tunnel(wire);
+    tunnel.startWork();
+
+    auto res = pump({frameRec("one\ntwo"), std::string{}, frameRec(""), resultRec(successResult())}, tunnel);
+
+    tunnel.stopWork();
+    wire.flush();
+
+    EXPECT_TRUE(res.tryGetSuccess() != nullptr);
+    auto decoded = decodeServeWire(wire.s);
+    ASSERT_EQ(decoded.buildLogLines.size(), 2u);
+    EXPECT_EQ(decoded.buildLogLines[0], "one");
+    EXPECT_EQ(decoded.buildLogLines[1], "two");
+}
+
 /* `resBuildLogLine` is line-oriented; multi-line frames must be split. */
 TEST(CoordinatorRelay, multiLineFramesAreSplit)
 {
