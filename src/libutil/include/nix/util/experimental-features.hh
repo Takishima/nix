@@ -39,6 +39,7 @@ enum struct ExperimentalFeature {
     ExternalBuilders,
     BLAKE3Hashes,
     ServeBuildLogs,
+    BuildCoordinator,
 };
 
 /**

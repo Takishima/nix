@@ -14,8 +14,10 @@
 #include "nix/util/finally.hh"
 #include "nix/util/archive.hh"
 #include "nix/store/derivations.hh"
+#include "nix/store/build/build-coordinator.hh"
 #include "nix/util/args.hh"
 #include "nix/util/logging.hh"
+#include "nix/util/environment-variables.hh"
 #include "nix/store/globals.hh"
 #include <variant>
 
@@ -651,7 +653,22 @@ static void performOp(
             drvPath = store->writeDerivation(Derivation{drv2});
         }
 
-        auto res = store->buildDerivation(drvPath, drv, buildMode);
+        auto res = [&]() -> BuildResult {
+            /* Relay to the per-store build coordinator. Normal builds only:
+               the registry keys on the resolved derivation alone, so a
+               relayed repair/check build could coalesce with a normal one
+               and silently lose its semantics. */
+            if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator) && buildMode == bmNormal) {
+                try {
+                    return relayBuildToCoordinator(*store, drvPath, drv, buildMode, *logger, trusted);
+                } catch (CoordinatorUnavailable & e) {
+                    // Dedup is lost, the build must not be.
+                    logger->warn(
+                        fmt("%s; building '%s' without build dedup", e.message(), store->printStorePath(drvPath)));
+                }
+            }
+            return store->buildDerivation(drvPath, drv, buildMode);
+        }();
         logger->stopWork();
         WorkerProto::write(*store, wconn, res);
         break;

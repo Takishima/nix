@@ -31,8 +31,9 @@ let
 in
 {
   # A derivation whose build (1) prints an identifiable marker, (2) prints a
-  # token unique to *this build process* (the builder shell's PID — distinct for
-  # every real build invocation), then (3) stays in-flight for `seconds` so a
+  # token unique to *this build execution* (a kernel-generated uuid — a PID
+  # would read the same for every build in environments that give each build
+  # its own PID namespace), then (3) stays in-flight for `seconds` so a
   # second, concurrent request for the *same* resolved derivation can attach to
   # it. The build runs in an
   # isolated mount namespace, so it communicates *only* through its streamed log
@@ -43,7 +44,8 @@ in
     name = "build-dedup-coordinator";
     buildCommand = ''
       echo "${marker}"
-      echo "BUILDTOKEN:$$"
+      read -r buildtoken < /proc/sys/kernel/random/uuid
+      echo "BUILDTOKEN:$buildtoken"
       # Hold the build in-flight long enough for the second request to attach.
       # This sandbox-shell busybox has no `sleep` applet (it is shell-only), so
       # we burn wall-clock with a pure-builtin loop. The test does not rely on

@@ -27,7 +27,7 @@ void MissingExperimentalFeature::anchor() {}
  * feature, we either have no issue at all if few features are not added
  * at the end of the list, or a proper merge conflict if they are.
  */
-constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::ServeBuildLogs);
+constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::BuildCoordinator);
 
 constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails = {{
     {
@@ -294,6 +294,34 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
             `QueryBuildLog` operation. The 2.9 wire layout is **not** yet a
             back-compat promise (`SERVE_PROTOCOL_VERSION` stays at 2.8); it
             stays gated here until the layout is frozen.
+        )",
+        .trackingUrl = "https://github.com/NixOS/nix/milestone/55",
+    },
+    {
+        .tag = Xp::BuildCoordinator,
+        .name = "build-coordinator",
+        .description = R"(
+            Enables the stock `nix-daemon` build **coordinator**: a separate,
+            lazily-spawned per-store process that coalesces concurrent builds of
+            the same resolved derivation into one build, fans its log out to
+            every attached client, and replays the buffered log to late joiners.
+
+            When enabled, the daemon's `BuildDerivation` handler relays to the
+            coordinator (at `$NIX_STATE_DIR/coordinator.socket`, overridable with
+            `NIX_BUILD_COORDINATOR_SOCKET`) instead of building in-process. This
+            is below the client wire — the client sees no protocol difference.
+            It is gated here while the coordinator deployment model (daemon
+            `--coordinator` role, crash recovery) and the deferred dedup wire
+            fields (`deduplicated`/`builderId`) are still maturing.
+
+            Current limitations: a coordinated build does not honour the
+            requesting client's `keep-failed` or `timeout`/`max-silent-time`
+            settings (the shared build is not owned by any one client, and
+            per-subscriber deadlines are not yet wired through the relay).
+            All clients of one daemon share a single identity towards the
+            coordinator, so any client may attach to — and observe the log
+            of — any other client's in-flight build, like `nix log` after
+            the fact.
         )",
         .trackingUrl = "https://github.com/NixOS/nix/milestone/55",
     },
