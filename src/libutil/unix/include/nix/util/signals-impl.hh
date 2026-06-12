@@ -63,6 +63,17 @@ void restoreSignals();
 
 void triggerInterrupt();
 
+/**
+ * Discard every registered interrupt callback.
+ *
+ * For use right after `fork()` in a child that lives on independently
+ * of the parent (e.g. a daemon-like process): the inherited callbacks
+ * belong to the parent — in particular a `ReceiveInterrupts` callback
+ * `pthread_kill`s a thread that did not survive the fork, which aborts
+ * the process (glibc) when an interrupt eventually fires.
+ */
+void clearInterruptCallbacks();
+
 } // namespace unix
 
 static inline void setInterrupted(bool isInterrupted)

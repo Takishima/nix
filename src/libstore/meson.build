@@ -280,6 +280,7 @@ subdir('nix-meson-build-support/common')
 sources = files(
   'binary-cache-store.cc',
   'build-result.cc',
+  'build/build-coordinator.cc',
   'build/build-log.cc',
   'build/build-registry.cc',
   'build/derivation-builder.cc',

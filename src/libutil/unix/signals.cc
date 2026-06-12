@@ -99,6 +99,11 @@ void unix::triggerInterrupt()
     }
 }
 
+void unix::clearInterruptCallbacks()
+{
+    getInterruptCallbacks().lock()->callbacks.clear();
+}
+
 static sigset_t savedSignalMask;
 static bool savedSignalMaskIsSet = false;
 

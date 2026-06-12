@@ -13,6 +13,7 @@ headers = [ config_pub_h ] + files(
   'aws-creds.hh',
   'binary-cache-store.hh',
   'build-result.hh',
+  'build/build-coordinator.hh',
   'build/build-log.hh',
   'build/build-registry.hh',
   'build/derivation-builder.hh',
