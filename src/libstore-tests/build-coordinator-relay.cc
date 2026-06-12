@@ -217,6 +217,20 @@ TEST(CoordinatorRelay, attachedAckIsIgnoredByThePump)
     EXPECT_EQ(capture.buildLogLines[0], "a line");
 }
 
+/* A coordinator that speaks a different control-protocol version answers the
+   handshake with MSG_INCOMPATIBLE. The pump must surface that at once as a
+   degrade signal (`CoordinatorUnavailable`) — so the relay falls back to an
+   uncoordinated build immediately — rather than waiting for a result record
+   that will never arrive. */
+TEST(CoordinatorRelay, incompatibleVersionDegradesPromptly)
+{
+    BufStringSink wire;
+    ServeTunnelLogger tunnel(wire);
+    tunnel.startWork();
+
+    EXPECT_THROW(pump({std::string(1, coordinator_proto::MSG_INCOMPATIBLE)}, tunnel), CoordinatorUnavailable);
+}
+
 /* The event-loop relay (`CoordinatorRelayPump::feed`) must decode the
    length-prefixed byte stream incrementally: records arrive in arbitrary
    splits (a socket read can end mid-length-prefix, mid-record, or carry

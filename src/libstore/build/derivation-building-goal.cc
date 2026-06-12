@@ -9,6 +9,8 @@
 #include "nix/util/environment-variables.hh"
 #include "nix/util/config-global.hh"
 #include "nix/store/build/worker.hh"
+#include "nix/store/build/build-coordinator.hh"
+#include "nix/util/experimental-features.hh"
 #include "nix/util/util.hh"
 #include "nix/util/compression.hh"
 #include "nix/store/common-protocol.hh"
@@ -437,6 +439,131 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
 
         return LocalBuildCapability{*localStoreP, ext};
     }();
+
+    /* Relay this resolved-derivation build to the per-store coordinator
+       instead of building it here. Branch *before* acquiring the output
+       `PathLocks`: the coordinator's build child takes them itself.
+       `NIX_BUILD_COORDINATOR_INNER` is the recursion guard for that child,
+       and hook-offloaded builds keep going to the hook — the coordinator
+       dedups the store that *runs* the build, not the one offloading it. */
+    if (experimentalFeatureSettings.isEnabled(Xp::BuildCoordinator) && buildMode == bmNormal
+        && std::holds_alternative<LocalBuildCapability>(localBuildResult)
+        && getEnv("NIX_BUILD_COORDINATOR_INNER").value_or("").empty() && dynamic_cast<LocalStore *>(&worker.store)) {
+        // An unusable or unresponsive coordinator degrades to the ordinary
+        // uncoordinated build below: dedup is lost, the build must not be.
+        bool coordinatorUnavailable = false;
+        {
+            /* The relay ships a `BasicDerivation`, so `inputDrvs` — which
+               for a classic input-addressed derivation determines the
+               input closure, and thus the sandbox — does not survive the
+               wire. Hijack `inputSrcs` to carry the realised input closure
+               (`inputPaths`), exactly like `build-remote` shipping a build
+               to a remote store. Derivations without `inputDrvs` (resolved
+               CA drvs) keep their `inputSrcs`: it determines their output
+               ids. Coalescing survives because every relayer of this
+               derivation computes the same closure, so the received bytes
+               — the registry key — still match. */
+            BasicDerivation relayDrv = *drv;
+            if (!drv->inputDrvs.map.empty())
+                relayDrv.inputSrcs = inputPaths;
+
+            /* Two transient handshake races are retried on the worker's
+               event loop: a lost election (connect refused between lock and
+               bind) and the coordinator idle-exiting between our connect
+               and our request (EOF before any byte). */
+            constexpr int relayConnectRetries = 10;
+
+            std::optional<BuildResult> relayed;
+            for (int attempt = 0; !relayed && !coordinatorUnavailable; ++attempt) {
+                std::optional<CoordinatorRelaySession> relayAttempt;
+                try {
+                    relayAttempt =
+                        tryStartCoordinatorRelay(worker.store, drvPath, relayDrv, buildMode, *logger, /*trusted=*/true);
+                } catch (CoordinatorUnavailable & e) {
+                    warn("%s; building '%s' without build dedup", e.message(), worker.store.printStorePath(drvPath));
+                    coordinatorUnavailable = true;
+                    break;
+                }
+                if (!relayAttempt) {
+                    if (attempt >= relayConnectRetries) {
+                        /* Persistently unreachable but not provably
+                           impossible — e.g. an orphaned process still
+                           holds the election lock. Degrade, don't fail. */
+                        warn(
+                            "could not reach the build coordinator; building '%s' without build dedup",
+                            worker.store.printStorePath(drvPath));
+                        coordinatorUnavailable = true;
+                        break;
+                    }
+                    co_await waitForAWhile();
+                    continue;
+                }
+                auto relay = std::move(*relayAttempt);
+                worker.childStarted(
+                    shared_from_this(), {relay.socket.get()}, /*inBuildSlot=*/false, /*respectTimeouts=*/false);
+
+                bool reconnect = false;
+                while (!relayed && !reconnect && !coordinatorUnavailable) {
+                    auto event = co_await WaitForChildEvent{};
+                    if (auto * output = std::get_if<ChildOutput>(&event)) {
+                        try {
+                            relayed = relay.pump.feed(output->data);
+                        } catch (CoordinatorUnavailable & e) {
+                            /* The coordinator declined mid-stream (e.g. it
+                               speaks an incompatible control-protocol version,
+                               surfaced by the pump as MSG_INCOMPATIBLE):
+                               degrade to an uncoordinated build exactly like
+                               the daemon relay's catch does, rather than
+                               failing the build. */
+                            worker.childTerminated(this);
+                            warn(
+                                "%s; building '%s' without build dedup",
+                                e.message(),
+                                worker.store.printStorePath(drvPath));
+                            coordinatorUnavailable = true;
+                        } catch (...) {
+                            // Unregister before the socket is closed by unwinding.
+                            worker.childTerminated(this);
+                            throw;
+                        }
+                    } else if (std::get_if<ChildEOF>(&event)) {
+                        worker.childTerminated(this);
+                        if (!relay.pump.receivedAnything() && attempt < relayConnectRetries)
+                            reconnect = true;
+                        else {
+                            /* The coordinator went away mid-build (crash,
+                               shutdown). Its build child died with it
+                               (PDEATHSIG), so re-running uncoordinated is
+                               sound — and a daemon restart must degrade
+                               the in-flight builds, not fail them. */
+                            warn(
+                                "the build coordinator closed the connection without a result; building '%s' without build dedup",
+                                worker.store.printStorePath(drvPath));
+                            coordinatorUnavailable = true;
+                        }
+                    } else if (auto * timeout = std::get_if<std::unique_ptr<TimedOut>>(&event)) {
+                        worker.childTerminated(this);
+                        co_return doneFailure(std::move(**timeout));
+                    }
+                }
+            }
+            if (!coordinatorUnavailable) {
+                worker.childTerminated(this);
+                buildResult = std::move(*relayed);
+            }
+        }
+        if (!coordinatorUnavailable) {
+            if (auto * fail = buildResult.tryGetFailure())
+                co_return doneFailure(*fail);
+            auto [allValid, validOutputs] = checkPathValidity(initialOutputs);
+            if (!allValid)
+                co_return doneFailure(BuildError(
+                    BuildResult::Failure::MiscFailure,
+                    "build coordinator reported success but the outputs of '%s' are invalid",
+                    worker.store.printStorePath(drvPath)));
+            co_return doneSuccess(BuildResult::Success::Built, std::move(validOutputs));
+        }
+    }
 
     auto acquireResources = [&](bool & done, PathLocks & outputLocks) -> Goal::Co {
         trace("trying to build");

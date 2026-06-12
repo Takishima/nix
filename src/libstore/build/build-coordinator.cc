@@ -500,7 +500,16 @@ struct Coordinator
     void handleStartOrAttach(int connFd, const std::string & body)
     {
         auto & conn = conns.at(connFd);
-        StringSource src(std::string_view(body).substr(1)); // skip tag
+        // Body layout: [tag][version][payload]. Check the version first: an
+        // incompatible peer is told so (MSG_INCOMPATIBLE) and closed, so it
+        // degrades immediately rather than parse-failing deep in the payload
+        // and waiting out its attach timeout.
+        if (body.size() < 2 || (uint8_t) body[1] != coordProtoVersion) {
+            enqueue(conn, std::string(1, MSG_INCOMPATIBLE));
+            conn.done = true;
+            return;
+        }
+        StringSource src(std::string_view(body).substr(2)); // skip tag + version
         std::string drvPathStr;
         src >> drvPathStr;
         auto drvPath = parseStore->parseStorePath(drvPathStr);
@@ -1001,6 +1010,11 @@ struct CoordinatorRelayPump::Impl
             if (!pendingLine.empty())
                 act.result(resBuildLogLine, pendingLine);
             return nlohmann::json::parse(body.substr(1)).get<BuildResult>();
+        } else if (tag == MSG_INCOMPATIBLE) {
+            // The coordinator speaks a different control-protocol version;
+            // degrade to an uncoordinated build now, do not wait for a result
+            // that will never come.
+            throw CoordinatorUnavailable("the build coordinator speaks an incompatible control-protocol version");
         }
         return std::nullopt;
     }
@@ -1070,6 +1084,7 @@ std::optional<CoordinatorRelaySession> tryStartCoordinatorRelay(
         writeDerivation(p, store, drv);
         p << (uint64_t) buildMode << (uint64_t) (trusted ? 1 : 0) << (uint64_t) 1 /*replayWanted*/;
         request.push_back(MSG_START_OR_ATTACH);
+        request.push_back((char) coordProtoVersion); // version byte follows the tag
         request += p.s;
     }
 

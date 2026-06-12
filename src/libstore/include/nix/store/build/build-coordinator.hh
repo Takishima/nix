@@ -128,6 +128,11 @@ CoordinatorRelaySession startCoordinatorRelay(
  * public client wire); in the header so the unit tests share them.
  */
 namespace coordinator_proto {
+/// The control-protocol version carried in the START_OR_ATTACH body (right
+/// after the tag). Bumped on any incompatible change to the record layout,
+/// so a peer that speaks a different version is rejected at the handshake
+/// (with MSG_INCOMPATIBLE) instead of parse-failing deep in the body.
+constexpr uint8_t coordProtoVersion = 1;
 /// child → coordinator
 constexpr char MSG_START_OR_ATTACH = 'S';
 /// child → coordinator: read-only introspection, answered with one MSG_ACTIVE.
@@ -143,6 +148,12 @@ constexpr char MSG_RESULT = 'R';
 constexpr char MSG_ATTACHED = 'K';
 /// coordinator → child: the QUERY_ACTIVE answer (a JSON array of active builds).
 constexpr char MSG_ACTIVE = 'A';
+/// coordinator → child: the peer's protocol version does not match, so the
+/// coordinator declines the request and closes. Sent promptly so the relay
+/// degrades to an uncoordinated build immediately instead of waiting out its
+/// attach timeout. Decoders ignore unknown tags, so an old peer that does not
+/// know this tag simply sees the close.
+constexpr char MSG_INCOMPATIBLE = 'I';
 } // namespace coordinator_proto
 
 /**
