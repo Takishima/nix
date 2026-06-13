@@ -159,6 +159,7 @@ suites = [
       'build-coordinator-mixed-clients.sh',
       'build-coordinator-failure-fanout.sh',
       'build-coordinator-gc-race.sh',
+      'build-coordinator-silent-build.sh',
       'build-active-builds.sh',
       'build-remote-elastic.sh',
       'store-split-log.sh',
