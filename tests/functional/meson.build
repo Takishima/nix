@@ -160,6 +160,7 @@ suites = [
       'build-coordinator-failure-fanout.sh',
       'build-coordinator-gc-race.sh',
       'build-coordinator-silent-build.sh',
+      'build-coordinator-timeout.sh',
       'build-active-builds.sh',
       'build-remote-elastic.sh',
       'store-split-log.sh',
